@@ -133,7 +133,7 @@ class LabTests(unittest.TestCase):
     def test_migration_preserves_v02_investigations(self):
         self.add()
         with database() as c:
-            self.assertEqual(c.execute('PRAGMA user_version').fetchone()[0], 4)
+            self.assertEqual(c.execute('PRAGMA user_version').fetchone()[0], 7)
             self.assertEqual(c.execute('SELECT COUNT(*) FROM investigations').fetchone()[0], 1)
             self.assertEqual(c.execute('SELECT COUNT(*) FROM posts').fetchone()[0], 5)
 

@@ -16,3 +16,14 @@
 11. Post text and public DIDs can be personal data. Apply a strict data minimization/retention policy and allow deletion; case notes or exports may retain copies independently, and must be reviewed separately.
 12. A short interval with zero matching content, or an exact-text match across multiple accounts, says **nothing reliable** about the size of bot populations or who controls the accounts. Avoid publishing individual-account allegations.
 13. Do not run this prototype on a publicly accessible interface. A permission checkbox is not a substitute for a lawful basis, source terms review, privacy impact assessment or independently verified research methodology.
+
+## Addendum: v0.5 local Signal Research
+
+14. Near-duplicate wording uses deterministic token-bigram similarity; it is **not** semantic understanding. A matching external URL is **not** evidence of shared ownership or automated behaviour. Do not report scores, rankings or account-level verdicts.
+15. Public Bluesky facet/embed target URLs are stored as **unverified references** in provenance, without crawling, redirect following, DNS lookup or changes to original post text. They are subject to the same 7-day live-record retention policy.
+16. A short, keyword-scoped stream observation cannot establish the prevalence or origin of artificial engagement. Consider independent baselines, honest coverage limitations and plausible organic coordination.
+17. Do not republish account lists, personal details or allegations automatically. Investigations remain human-reviewed and local-only. The synthetic fixture loader is disabled by default.
+
+
+## Regional research (v0.5.1)
+Research profiles, keyword matches, language tags and display timezones are **not** account geographic attributes. OIO does not infer nationality, residence, political ideology, real identity, bot control or the physical hosting location of an account. Inspect missing or unreliable `record.langs` tags and selection bias when comparing captures. Keep candidate signals unreviewed until a human has evaluated independent benign explanations.

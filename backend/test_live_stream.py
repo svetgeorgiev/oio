@@ -48,7 +48,7 @@ class LiveTests(unittest.TestCase):
         self.patcher = patch('app.DB', os.path.join(self.tmp.name, 'test.sqlite3'))
         self.patcher.start()
         with database() as c:
-            self.assertEqual(c.execute('PRAGMA user_version').fetchone()[0], 4)
+            self.assertEqual(c.execute('PRAGMA user_version').fetchone()[0], 7)
 
     def tearDown(self):
         self.patcher.stop()
@@ -62,6 +62,19 @@ class LiveTests(unittest.TestCase):
                 validate_config(config(**override))
         self.assertEqual(validate_config(config())['keyword'], 'research phrase')
 
+    def test_bounded_or_phrases_preserve_existing_keyword_semantics(self):
+        from live_stream import parse_keywords
+        self.assertEqual(parse_keywords('news | community update'), ['news','community update'])
+        self.assertEqual(validate_config(config(keyword='research phrase|community alert'))['keyword'],
+                         'research phrase|community alert')
+        self.assertIsNotNone(normalize_live_event(sample_event(text='community alert about the station'),
+                                                   'research phrase|community alert'))
+        self.assertIsNone(normalize_live_event(sample_event(text='completely unrelated content'),
+                                               'research phrase|community alert'))
+        for value in ('news||updates', 'short|a', 'one|two|three|four', 'x'*91, 'news|more\nnews'):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                validate_config(config(keyword=value))
+
     def test_normalize_create_delete_and_invalid(self):
         event=sample_event()
         post=normalize_live_event(event, 'RESEARCH PHRASE')
@@ -73,6 +86,50 @@ class LiveTests(unittest.TestCase):
         self.assertEqual(normalize_live_event(event, 'unmatched')['action'],'remove')
         event['did']='bad-identifier'
         self.assertIsNone(normalize_live_event(event,'research phrase'))
+
+    def test_jetstream_facet_links_are_preserved_separately_and_grouped(self):
+        for i in range(3):
+            event=sample_event(i)
+            event['commit']['record']['facets']=[{'features':[
+                {'$type':'app.bsky.richtext.facet#link',
+                 'uri':f'https://news.example.net/report?id=7&utm_source={i}'}]}]
+            normalized=normalize_live_event(event,'research phrase')
+            self.assertEqual(normalized['post']['text'],'Example research phrase')
+            self.assertEqual(len(normalized['provenance']['external_links']),1)
+            self.assertEqual(insert_record(database, normalized, 'observed-session', 'jetstream.us-east.bsky.network'),1)
+        leads=[c for c in clusters() if c['signal_type']=='shared_link']
+        self.assertEqual(len(leads),1)
+        self.assertEqual(leads[0]['sample_text'],'news.example.net/report?id=7')
+        case,_=create_investigation({'cluster_id':leads[0]['id']})
+        bundle=lab_export(database,case['id'],find_cluster)
+        self.assertEqual(len(bundle['source_posts'][0]['provenance']['facet_and_embed_urls_unverified']),1)
+        self.assertEqual(len(recent_posts(database)),3)
+        self.assertTrue(recent_posts(database)[0]['external_links'].startswith('['))
+
+    def test_embed_external_link_and_legacy_database_upgrade(self):
+        import sqlite3
+        from live_stream import extract_record_links
+        record={'embed':{'$type':'app.bsky.embed.recordWithMedia',
+               'media':{'$type':'app.bsky.embed.external',
+                        'external':{'uri':'https://publisher.example.org/story'}}}}
+        self.assertEqual(extract_record_links(record), ['https://publisher.example.org/story'])
+        self.assertEqual(extract_record_links({'embed':{'$type':'app.bsky.embed.external',
+                 'external':{'uri':'http://127.0.0.1/private'}}}),[])
+        legacy=os.path.join(self.tmp.name,'legacy.sqlite')
+        c=sqlite3.connect(legacy)
+        c.executescript('''CREATE TABLE live_post_provenance (
+            post_id TEXT PRIMARY KEY, did TEXT NOT NULL, rkey TEXT NOT NULL,
+            cid TEXT NOT NULL, event_time_us INTEGER NOT NULL,
+            record_created_at TEXT, collection TEXT NOT NULL, provider TEXT NOT NULL,
+            session_id TEXT NOT NULL, captured_at TEXT NOT NULL);
+            INSERT INTO live_post_provenance VALUES
+            ('legacy','did:plc:aaaaaaaaaaaaaaaaaaaaaaaa','post1','cid',1,NULL,
+             'app.bsky.feed.post','provider','session','2026-10-20T18:00:00+00:00');
+            PRAGMA user_version=4;''')
+        init_schema(c)
+        self.assertEqual(c.execute('PRAGMA user_version').fetchone()[0],7)
+        self.assertEqual(c.execute("SELECT external_links FROM live_post_provenance WHERE post_id='legacy'").fetchone()[0],'[]')
+        c.close()
 
     def test_bounded_session_idempotency_and_provenance(self):
         feed=[json.dumps(sample_event(i)) for i in range(3)]
@@ -149,7 +206,7 @@ class LiveTests(unittest.TestCase):
         case, created = create_investigation({'cluster_id': group['id']})
         self.assertTrue(created)
         exported = lab_export(database, case['id'], find_cluster)
-        self.assertEqual(exported['application_version'], '0.4.0')
+        self.assertEqual(exported['application_version'], '0.5.2')
         self.assertEqual(len(exported['source_posts']), 3)
         item = exported['source_posts'][0]
         self.assertEqual(item['provenance']['session_id'], 'test-live-session')

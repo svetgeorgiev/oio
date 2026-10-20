@@ -1,4 +1,4 @@
-"""OIO v0.4: local, evidence-first research API with opt-in bounded Bluesky capture.
+"""OIO v0.5: local, evidence-first research API with opt-in bounded Bluesky capture.
 
 No authentication or public publication. Never bind this prototype to a public interface.
 """
@@ -12,15 +12,17 @@ from collections import defaultdict
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 
 from laboratory import add_evidence, delete_evidence, import_evidence, lab_snapshot, lab_export
 from live_stream import CaptureManager, init_schema, recent_posts, SOURCE
+from research import detect_patterns, search_posts
+from regions import public_profiles
 
 ROOT = os.path.dirname(os.path.dirname(__file__))
 DB = os.environ.get('OIO_DB', os.path.join(ROOT, 'data.sqlite3'))
 FIXTURE = os.path.join(ROOT, 'fixtures', 'sample_posts.json')
-VERSION = '0.4.0'
+VERSION = '0.5.2'
 MAX_BODY = 16 * 1024
 ALLOWED_STATUSES = ('investigating', 'needs_context', 'dismissed', 'closed')
 
@@ -126,7 +128,9 @@ def ingest(posts):
 
 def clusters(window_seconds=180, min_actors=3):
     with database() as c:
-        posts = [dict(r) for r in c.execute('SELECT * FROM posts ORDER BY fingerprint,created_at,id')]
+        posts = [dict(r) for r in c.execute('''SELECT p.*,v.external_links
+            FROM posts p LEFT JOIN live_post_provenance v ON v.post_id=p.id
+            ORDER BY p.fingerprint,p.created_at,p.id''')]
         investigations = {r['cluster_id']: dict(r) for r in c.execute('SELECT id,cluster_id,status FROM investigations')}
         old_reviews = {r['cluster_id']: dict(r) for r in c.execute('SELECT * FROM reviews')}
     groups = defaultdict(list)
@@ -153,18 +157,31 @@ def clusters(window_seconds=180, min_actors=3):
             investigation = investigations.get(key)
             legacy = old_reviews.get(key, {'status': 'unreviewed', 'notes': ''})
             results.append({
-                'id': key,
+                'id': key, 'signal_type': 'exact_text',
+                'reason': 'Breaking news, collective campaigns and quotations may match exactly.',
                 'pattern': 'exact normalized text in short time window',
                 'distinct_actors': len(actors), 'post_count': len(b),
                 'first_seen': b[0]['created_at'], 'last_seen': b[-1]['created_at'],
                 'sample_text': b[0]['text'],
                 'evidence': [{'id': p['id'], 'actor': p['actor'], 'source': p['source'],
-                              'url': p['url'], 'created_at': p['created_at']} for p in b],
+                              'url': p['url'], 'created_at': p['created_at']} for p in b[:120]],
+                'evidence_truncated': len(b) > 120,
                 'review': {'status': investigation['status'] if investigation else legacy['status'],
                            'notes': legacy['notes'] if not investigation else ''},
                 'investigation_id': investigation['id'] if investigation else None,
             })
-    return sorted(results, key=lambda x: (-x['distinct_actors'], x['first_seen']))
+    # Add distinct, explainable research leads without changing existing exact IDs.
+    # A shared URL or near-match is not a bot verdict or proof of common control.
+    for candidate in detect_patterns(posts):
+        investigation = investigations.get(candidate['id'])
+        legacy = old_reviews.get(candidate['id'], {'status': 'unreviewed', 'notes': ''})
+        candidate['review'] = {
+            'status': investigation['status'] if investigation else legacy['status'],
+            'notes': legacy['notes'] if not investigation else '',
+        }
+        candidate['investigation_id'] = investigation['id'] if investigation else None
+        results.append(candidate)
+    return sorted(results, key=lambda x: (-x['distinct_actors'], x['first_seen'], x['id']))
 
 
 def find_cluster(cluster_id):
@@ -285,6 +302,33 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/live/posts':
             return self.reply(200, {'posts': recent_posts(database),
                                     'notice': 'Sampled public posts, not verified identities or bot verdicts.'})
+        if path == '/api/research/profiles':
+            with database() as c:
+                by_profile = {r['profile_id']: r['count'] for r in c.execute('''
+                    SELECT profile_id, COUNT(*) AS count FROM live_post_provenance
+                    GROUP BY profile_id''')}
+            return self.reply(200, {'profiles': public_profiles(), 'saved_by_selected_profile': by_profile,
+                'notice': 'Research profiles are analyst-selected topics, NOT verified geographic origins.'})
+        if path == '/api/research/search':
+            args = parse_qs(urlparse(self.path).query, keep_blank_values=True)
+            try:
+                limit = int(args.get('limit', ['60'])[0])
+                result = search_posts(database, query=args.get('q', [''])[0],
+                                      scope=args.get('scope', ['live'])[0], limit=limit,
+                                      start=args.get('from', [None])[0], end=args.get('to', [None])[0],
+                                      profile=args.get('profile', ['all'])[0],
+                                      language=args.get('lang', ['all'])[0])
+                return self.reply(200, result)
+            except (ValueError, OverflowError) as exc:
+                return self.reply(400, {'error': str(exc)})
+        if path == '/api/research/signals':
+            candidates = clusters()
+            return self.reply(200, {
+                'signals': candidates,
+                'counts': {kind: sum(c['signal_type'] == kind for c in candidates)
+                           for kind in ('exact_text', 'near_text', 'shared_link')},
+                'notice': 'Candidate patterns require independent human verification, including benign explanations.',
+            })
         if path == '/api/clusters':
             return self.reply(200, {'clusters': clusters(), 'notice': 'Signals are not proof of automation, shared control or wrongdoing.'})
         if path.startswith('/api/clusters/'):
@@ -355,6 +399,8 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/api/live/purge':
                 return self.reply(200, live_manager.purge(self.read_json()))
             if path == '/api/load-fixture':
+                if os.environ.get('OIO_ENABLE_DEMO') != '1':
+                    return self.reply(403, {'error': 'Synthetic fixtures disabled. Set OIO_ENABLE_DEMO=1 only in a separate test workspace.'})
                 with open(FIXTURE, encoding='utf-8') as f:
                     return self.reply(200, {'inserted': ingest(json.load(f))})
             if path == '/api/investigations':

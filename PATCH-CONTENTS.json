@@ -1,0 +1,76 @@
+{
+  "patch": "OIO v0.5.2 — Collector Diagnostics",
+  "based_on": "OIO v0.5.1 European Research Expansion",
+  "requires": "OIO v0.5.1 installed (not for direct extraction over GitHub main at v0.4)",
+  "new_schema_version": 7,
+  "python_unittest_passed": 59,
+  "javascript_tests_passed": 7,
+  "vite_build": "Requires verification on Windows; deps unavailable in build environment",
+  "changes": [
+    {
+      "path": "README.md",
+      "sha256": "949ae3d96b1a41a0513876f5ff07560cb4bd07beb0f89f49b2175d89f0fd7869",
+      "bytes": 17413
+    },
+    {
+      "path": "backend/app.py",
+      "sha256": "36536b30753f4b7558f744f673a7906c905447594fbef05b61392bb9281057a4",
+      "bytes": 22046
+    },
+    {
+      "path": "backend/laboratory.py",
+      "sha256": "28a306850f6f787e84dd21d361d113e85a9d79997cbd1cfb0e4a74798fccbf6a",
+      "bytes": 14303
+    },
+    {
+      "path": "backend/live_stream.py",
+      "sha256": "7d143243e55244282e119beb048fb804e2ea791594e805db7da74ea49096caec",
+      "bytes": 28326
+    },
+    {
+      "path": "backend/test_app.py",
+      "sha256": "90c1452b293ba88d7c72cb5614b375da3f6a908f83a6f15bdbb9ccfe0760f0c6",
+      "bytes": 11468
+    },
+    {
+      "path": "backend/test_laboratory.py",
+      "sha256": "b2b52f632075bc3a64fd8f830fb05846a4218c580caae264c1ddf8eb72706830",
+      "bytes": 7987
+    },
+    {
+      "path": "backend/test_live_stream.py",
+      "sha256": "4963709f1bc1f09a8addbbf0b4361cd115b023a36d9897e581079bf38eae8762",
+      "bytes": 14271
+    },
+    {
+      "path": "backend/test_regions.py",
+      "sha256": "256c0b02c3ea186eafe30245904759e83d0febd08f01637847ce3a4242f8a2c6",
+      "bytes": 9563
+    },
+    {
+      "path": "backend/test_diagnostics.py",
+      "sha256": "90cdf40d25571785c827c6a320eebb88f04c35196d203fc7ecc424d85d6039fe",
+      "bytes": 8381
+    },
+    {
+      "path": "frontend/src/main.js",
+      "sha256": "248e306af24b3d8ac96b3d4e3946b2adcab26698fd6efd5d611773576fb3a1fb",
+      "bytes": 75564
+    },
+    {
+      "path": "frontend/src/style.css",
+      "sha256": "ea6d356f9174e94d046806c087b1a67302b4b3109d396fd1376694cb1ae79645",
+      "bytes": 28991
+    },
+    {
+      "path": "docs/ROADMAP.md",
+      "sha256": "919d714cec55cc48118662ad3dff4063335738894e1e0a66035f4964144abbb9",
+      "bytes": 5530
+    },
+    {
+      "path": "docs/RELEASE-v0.5.2.md",
+      "sha256": "0fc8088ae2b159de902ccf4e74436e3039860b03f11bdf7c205904c2c0bdc870",
+      "bytes": 6985
+    }
+  ]
+}

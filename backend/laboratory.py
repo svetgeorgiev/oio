@@ -229,7 +229,8 @@ def lab_snapshot(database, identifier, find_cluster):
               v.did AS live_did, v.rkey AS live_rkey, v.cid AS live_cid,
               v.event_time_us AS live_time_us, v.record_created_at AS live_record_created_at,
               v.provider AS live_provider, v.captured_at AS live_captured_at,
-              v.session_id AS live_session_id
+              v.session_id AS live_session_id, v.external_links AS live_external_links,
+              v.declared_langs AS live_declared_langs, v.profile_id AS live_profile_id
               FROM posts p LEFT JOIN live_post_provenance v ON v.post_id=p.id
               WHERE p.id IN (''' + placeholders + ') ORDER BY p.created_at,p.id', post_ids)]
     for p in posts:
@@ -241,6 +242,9 @@ def lab_snapshot(database, identifier, find_cluster):
                 'claimed_record_created_at': p['live_record_created_at'],
                 'jetstream_provider': p['live_provider'],
                 'captured_at': p['live_captured_at'], 'session_id': p['live_session_id'],
+                'facet_and_embed_urls_unverified': json.loads(p['live_external_links'] or '[]'),
+                'declared_post_languages_unverified': json.loads(p['live_declared_langs'] or '[]'),
+                'research_topic_profile_selected_by_analyst': p['live_profile_id'],
                 'limitations': 'Jetstream alone does not prove record authenticity or current availability.'
             }
         for key in tuple(p):
@@ -254,7 +258,8 @@ def lab_snapshot(database, identifier, find_cluster):
     timeline.sort(key=lambda e: (e['at'], str(e['id'])))
     sources = Counter(hostname(item['source_url']).lower() for item in items)
     original_sources = Counter(hostname(p['url']).lower() for p in posts)
-    referred = Counter(domain for p in posts for domain in referenced_domains(p['text']))
+    referred = Counter(domain for p in posts for domain in set(referenced_domains(p['text'])) | set(
+        domain for url in p.get('provenance',{}).get('facet_and_embed_urls_unverified',[]) for domain in referenced_domains(url)))
     domains = {
         'manual_reference_hosts': [{'domain': k, 'count': v} for k, v in sorted(sources.items(), key=lambda p: (-p[1], p[0])) if k],
         'post_record_hosts': [{'domain': k, 'count': v} for k, v in sorted(original_sources.items(), key=lambda p: (-p[1], p[0])) if k],
@@ -271,7 +276,7 @@ def lab_snapshot(database, identifier, find_cluster):
 
 def lab_export(database, identifier, find_cluster):
     snapshot = lab_snapshot(database, identifier, find_cluster)
-    return {'format': 'oio-evidence-snapshot', 'schema_version': 1, 'application_version': '0.4.0',
+    return {'format': 'oio-evidence-snapshot', 'schema_version': 1, 'application_version': '0.5.2',
             'generated_at': utcnow(), 'scope': 'local analyst research',
             'analysis_parameters': {'method': 'normalized exact-text fingerprint', 'window_seconds': 180,
                                     'minimum_distinct_source_actor_pairs': 3,

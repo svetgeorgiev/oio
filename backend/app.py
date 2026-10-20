@@ -1,4 +1,4 @@
-"""OIO v0.2: local, evidence-first coordination research API.
+"""OIO v0.3: local, evidence-first coordination research API.
 
 Only synthetic fixture ingestion is supported. No external data collection, authentication,
 or public publication is implemented. Never bind this prototype to a public interface.
@@ -14,10 +14,12 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
+from laboratory import add_evidence, delete_evidence, import_evidence, lab_snapshot, lab_export
+
 ROOT = os.path.dirname(os.path.dirname(__file__))
 DB = os.environ.get('OIO_DB', os.path.join(ROOT, 'data.sqlite3'))
 FIXTURE = os.path.join(ROOT, 'fixtures', 'sample_posts.json')
-VERSION = '0.2.0'
+VERSION = '0.3.0'
 MAX_BODY = 16 * 1024
 ALLOWED_STATUSES = ('investigating', 'needs_context', 'dismissed', 'closed')
 
@@ -61,7 +63,20 @@ def connect():
         summary TEXT NOT NULL,
         created_at TEXT NOT NULL
       );
-      PRAGMA user_version=2;
+      CREATE TABLE IF NOT EXISTS evidence_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        investigation_id TEXT NOT NULL REFERENCES investigations(id),
+        kind TEXT NOT NULL CHECK(kind IN ('observation','context','counterevidence')),
+        title TEXT NOT NULL,
+        source_url TEXT NOT NULL,
+        observed_at TEXT,
+        notes TEXT NOT NULL,
+        sha256 TEXT NOT NULL,
+        captured_at TEXT NOT NULL,
+        UNIQUE(investigation_id,sha256)
+      );
+      CREATE INDEX IF NOT EXISTS ix_evidence_case ON evidence_items(investigation_id);
+      PRAGMA user_version=3;
     ''')
     return c
 
@@ -240,6 +255,11 @@ def update_investigation(identifier, payload):
 
 
 class Handler(BaseHTTPRequestHandler):
+    def local_host_allowed(self):
+        """Reject DNS-rebinding Host headers while keeping ephemeral local test ports usable."""
+        host = self.headers.get('Host', '')
+        return bool(re.fullmatch(r'(?:127\.0\.0\.1|localhost|\[::1\])(?::[0-9]{1,5})?', host))
+
     def reply(self, status, data):
         body = json.dumps(data, ensure_ascii=False).encode('utf-8')
         self.send_response(status)
@@ -251,6 +271,8 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        if not self.local_host_allowed():
+            return self.reply(403, {'error': 'Local host only'})
         path = urlparse(self.path).path
         if path == '/api/health':
             return self.reply(200, {'status': 'ok', 'version': VERSION, 'mode': 'local synthetic prototype'})
@@ -261,6 +283,17 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200, {'cluster': cluster}) if cluster else self.reply(404, {'error': 'Cluster not found'})
         if path == '/api/investigations':
             return self.reply(200, {'investigations': investigations()})
+        parts = path.strip('/').split('/')
+        if len(parts) == 4 and parts[:2] == ['api', 'investigations'] and parts[3] in ('lab',):
+            try:
+                return self.reply(200, {'lab': lab_snapshot(database, parts[2], find_cluster)})
+            except LookupError as exc:
+                return self.reply(404, {'error': str(exc)})
+        if len(parts) == 5 and parts[:2] == ['api', 'investigations'] and parts[3:] == ['lab', 'export']:
+            try:
+                return self.reply(200, lab_export(database, parts[2], find_cluster))
+            except LookupError as exc:
+                return self.reply(404, {'error': str(exc)})
         if path.startswith('/api/investigations/'):
             item = investigation_by_id(path.split('/')[-1])
             return self.reply(200, {'investigation': item}) if item else self.reply(404, {'error': 'Investigation not found'})
@@ -273,10 +306,10 @@ class Handler(BaseHTTPRequestHandler):
                                     'open_investigations': active, 'published_cases': 0})
         return self.reply(404, {'error': 'Not found'})
 
-    def read_json(self):
+    def read_json(self, limit=MAX_BODY):
         size = self.headers.get('Content-Length')
-        if not size or not size.isdigit() or not 0 < int(size) <= MAX_BODY:
-            raise ValueError('Request body must be between 1 and 16384 bytes')
+        if not size or not size.isdigit() or not 0 < int(size) <= limit:
+            raise ValueError(f'Request body must be between 1 and {limit} bytes')
         try:
             return json.loads(self.rfile.read(int(size)))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -284,13 +317,26 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         # The API is localhost-only, unauthenticated, and unsuitable for public hosting.
-        if self.client_address[0] not in ('127.0.0.1', '::1'):
+        if not self.local_host_allowed() or self.client_address[0] not in ('127.0.0.1', '::1'):
             return self.reply(403, {'error': 'Local only'})
         origin = self.headers.get('Origin')
         if origin and origin not in ('http://127.0.0.1:5173', 'http://localhost:5173'):
             return self.reply(403, {'error': 'Origin not permitted'})
         path = urlparse(self.path).path
         try:
+            parts = path.strip('/').split('/')
+            if len(parts) == 5 and parts[:2] == ['api', 'investigations'] and parts[3:] == ['lab', 'evidence']:
+                added = add_evidence(database, parts[2], self.read_json())
+                return self.reply(201 if added else 200, {'inserted': added})
+            if len(parts) == 5 and parts[:2] == ['api', 'investigations'] and parts[3:] == ['lab', 'import']:
+                added = import_evidence(database, parts[2], self.read_json(limit=160 * 1024))
+                return self.reply(200, {'inserted': added})
+            if (len(parts) == 7 and parts[:2] == ['api', 'investigations']
+                    and parts[3:5] == ['lab', 'evidence'] and parts[6] == 'delete'):
+                if not parts[5].isdigit():
+                    raise ValueError('Invalid evidence identifier')
+                delete_evidence(database, parts[2], int(parts[5]), self.read_json())
+                return self.reply(200, {'deleted': True})
             if path == '/api/load-fixture':
                 with open(FIXTURE, encoding='utf-8') as f:
                     return self.reply(200, {'inserted': ingest(json.load(f))})
@@ -312,7 +358,7 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == '__main__':
     connect().close()
     server = ThreadingHTTPServer(('127.0.0.1', 8765), Handler)
-    print('OIO local API v0.2: http://127.0.0.1:8765', flush=True)
+    print('OIO local API v0.3: http://127.0.0.1:8765', flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

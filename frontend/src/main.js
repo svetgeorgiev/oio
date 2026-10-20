@@ -1,5 +1,6 @@
 import { createApp, computed, onMounted, ref } from 'vue';
 import './style.css';
+import { timelineBuckets, snapshotCSV } from './lab-utils.js';
 
 const STATUS_LABELS = {
   unreviewed: 'Unreviewed',
@@ -52,6 +53,17 @@ createApp({
     const loading = ref(false);
     const saving = ref(false);
     const busy = ref(false);
+    const lab = ref(null);
+    const labCaseId = ref('');
+    const labBusy = ref(false);
+    const labSaving = ref(false);
+    const permissionConfirmed = ref(false);
+    const evidenceForm = ref({kind:'observation', title:'', source_url:'', observed_at:'', notes:''});
+    const importFormat = ref('csv');
+    const importContent = ref('');
+    const importFilename = ref('');
+    const timelineUnit = ref('minute');
+    const evidenceFilter = ref('all');
 
     const selectedCluster = computed(() => clusters.value.find(c => c.id === selectedClusterId.value) || null);
     const caseCluster = computed(() => clusters.value.find(c => c.id === selectedCase.value?.cluster_id) || null);
@@ -66,6 +78,11 @@ createApp({
       const matches = !term || [item.title, item.id, item.cluster_id, item.notes].join(' ').toLowerCase().includes(term);
       return matches && (statusFilter.value === 'all' || item.status === statusFilter.value);
     }));
+    const timeline = computed(() => timelineBuckets(lab.value?.timeline || [], timelineUnit.value));
+    const displayedTimeline = computed(() => timeline.value.slice(-32));
+    const maxTimelineCount = computed(() => Math.max(1, ...displayedTimeline.value.map(p => p.total)));
+    const filteredEvidence = computed(() => (lab.value?.evidence_items || []).filter(item =>
+      evidenceFilter.value === 'all' || item.kind === evidenceFilter.value));
     const reviewCount = computed(() => clusters.value.filter(c => !c.investigation_id).length);
     const graphNodes = computed(() => {
       if (!selectedCluster.value) return [];
@@ -170,6 +187,112 @@ createApp({
       finally { saving.value = false; }
     }
 
+    async function openLab(identifier = null) {
+      const id = identifier || labCaseId.value || selectedCase.value?.id || cases.value[0]?.id;
+      navigate('laboratory');
+      if (!id) { lab.value = null; return; }
+      labCaseId.value = id;
+      await refreshLab();
+    }
+
+    async function refreshLab() {
+      if (!labCaseId.value) { lab.value = null; return; }
+      labBusy.value = true;
+      try {
+        error.value = '';
+        const data = await api(`/investigations/${encodeURIComponent(labCaseId.value)}/lab`);
+        lab.value = data.lab;
+      } catch (e) { error.value = e.message; lab.value = null; }
+      finally { labBusy.value = false; }
+    }
+
+    async function saveEvidence() {
+      if (!labCaseId.value) return;
+      labSaving.value = true;
+      try {
+        error.value = '';
+        const entry = {...evidenceForm.value};
+        if (entry.observed_at) {
+          const date = new Date(entry.observed_at);
+          if (Number.isNaN(date.getTime())) throw new Error('Choose a valid observation date.');
+          entry.observed_at = date.toISOString();
+        } else entry.observed_at = null;
+        const data = await api(`/investigations/${encodeURIComponent(labCaseId.value)}/lab/evidence`, {
+          method: 'POST', body: JSON.stringify({ permission_confirmed: permissionConfirmed.value, evidence: entry }),
+        });
+        await refreshLab();
+        if (data.inserted) evidenceForm.value = {kind:'observation', title:'', source_url:'', observed_at:'', notes:''};
+        notice.value = data.inserted ? 'Evidence reference saved and hashed.' : 'Identical evidence already attached.';
+      } catch (e) { error.value = e.message; }
+      finally { labSaving.value = false; }
+    }
+
+    async function onImportFile(event) {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      importFilename.value = file.name;
+      importFormat.value = file.name.toLowerCase().endsWith('.json') ? 'json' : 'csv';
+      if (file.size > 128 * 1024) { error.value = 'Choose an evidence file under 128 KiB.'; importContent.value = ''; return; }
+      importContent.value = await file.text();
+      event.target.value = '';
+    }
+
+    async function importReferences() {
+      if (!labCaseId.value) return;
+      labSaving.value = true;
+      try {
+        error.value = '';
+        const data = await api(`/investigations/${encodeURIComponent(labCaseId.value)}/lab/import`, {
+          method: 'POST', body: JSON.stringify({format: importFormat.value, content: importContent.value,
+            permission_confirmed: permissionConfirmed.value}),
+        });
+        await refreshLab();
+        notice.value = data.inserted ? `Imported ${data.inserted} references; existing duplicates skipped.` : 'No new evidence — identical entries already exist.';
+      } catch (e) { error.value = e.message; }
+      finally { labSaving.value = false; }
+    }
+
+    function saveFile(name, content, mime) {
+      const blob = new Blob([content], { type: mime });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = name;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    async function exportLab(format) {
+      if (!labCaseId.value) return;
+      labBusy.value = true;
+      try {
+        error.value = '';
+        const snapshot = await api(`/investigations/${encodeURIComponent(labCaseId.value)}/lab/export`);
+        const base = `oio-${labCaseId.value}-evidence`;
+        if (format === 'json') saveFile(`${base}.json`, JSON.stringify(snapshot, null, 2), 'application/json');
+        else saveFile(`${base}.csv`, snapshotCSV(snapshot), 'text/csv;charset=utf-8');
+        notice.value = 'Research export downloaded locally. It is not a verified public report.';
+      } catch (e) { error.value = e.message; }
+      finally { labBusy.value = false; }
+    }
+
+    async function removeEvidence(item) {
+      const reason = window.prompt(`Why remove reference #${item.id}? (minimum 10 characters)`);
+      if (reason === null) return;
+      labSaving.value = true;
+      try {
+        error.value = '';
+        await api(`/investigations/${encodeURIComponent(labCaseId.value)}/lab/evidence/${item.id}/delete`, {
+          method: 'POST', body: JSON.stringify({ reason }),
+        });
+        await refreshLab();
+        notice.value = `Evidence #${item.id} removed. Deletion recorded in audit history.`;
+      } catch (e) { error.value = e.message; }
+      finally { labSaving.value = false; }
+    }
+
     function caseBack() { selectedCase.value = null; }
     function statusLabel(status) { return STATUS_LABELS[status] || 'Unreviewed'; }
     function statusClass(status) { return 'status-' + (status || 'unreviewed'); }
@@ -179,8 +302,12 @@ createApp({
       page, stats, clusters, cases, selectedCase, selectedCluster, selectedClusterId, caseCluster,
       filteredClusters, filteredCases, graphNodes, activeActor, chosenActorEvidence,
       search, statusFilter, draft, error, notice, loading, saving, busy, reviewCount,
+      lab, labCaseId, labBusy, labSaving, permissionConfirmed, evidenceForm, importFormat,
+      importContent, importFilename, timelineUnit, evidenceFilter, filteredEvidence,
+      timeline, displayedTimeline, maxTimelineCount,
       refresh, loadDemo, navigate, inspectCluster, openCase, selectCase, saveReview, caseBack,
-      statusLabel, statusClass, prettyDate,
+      statusLabel, statusClass, prettyDate, openLab, refreshLab, saveEvidence, onImportFile,
+      importReferences, exportLab, removeEvidence,
     };
   },
   template: `
@@ -193,14 +320,15 @@ createApp({
           <button :class="['nav-item',{active:page==='detections'}]" @click="navigate('detections')"><span class="nav-icon">⌁</span> Detection queue <em>{{stats.candidate_clusters}}</em></button>
           <button :class="['nav-item',{active:page==='network'}]" @click="navigate('network')"><span class="nav-icon">◎</span> Network explorer</button>
           <button :class="['nav-item',{active:page==='investigations'}]" @click="navigate('investigations');caseBack()"><span class="nav-icon">▤</span> Investigations <em>{{stats.investigations}}</em></button>
+          <button :class="['nav-item',{active:page==='laboratory'}]" @click="openLab()"><span class="nav-icon">⚗</span> Evidence Laboratory</button>
         </nav>
         <div class="sidebar-label sidebar-section">REFERENCE</div>
         <nav class="side-nav"><button :class="['nav-item',{active:page==='methodology'}]" @click="navigate('methodology')"><span class="nav-icon">ⓘ</span> Methodology</button></nav>
-        <div class="sidebar-footer"><span class="pulse"></span> Local research mode <small>Synthetic records only · v0.2</small></div>
+        <div class="sidebar-footer"><span class="pulse"></span> Local research mode <small>Synthetic records &amp; manual references · v0.3</small></div>
       </aside>
 
       <div class="workspace">
-        <header class="topbar"><div class="crumb">WORKSPACE <span>/</span> <strong>{{ page === 'overview' ? 'Overview' : page === 'detections' ? 'Detection queue' : page === 'network' ? 'Network explorer' : page === 'investigations' ? 'Investigations' : 'Methodology' }}</strong></div><div class="top-actions"><span class="privacy-label">● LOCAL · NOT PUBLIC</span><button class="icon-button" title="Refresh data" :disabled="loading" @click="refresh()">↻</button></div></header>
+        <header class="topbar"><div class="crumb">WORKSPACE <span>/</span> <strong>{{ page === 'overview' ? 'Overview' : page === 'detections' ? 'Detection queue' : page === 'network' ? 'Network explorer' : page === 'investigations' ? 'Investigations' : page === 'laboratory' ? 'Evidence Laboratory' : 'Methodology' }}</strong></div><div class="top-actions"><span class="privacy-label">● LOCAL · NOT PUBLIC</span><button class="icon-button" title="Refresh data" :disabled="loading" @click="refresh()">↻</button></div></header>
         <main class="main-content">
           <div v-if="error" role="alert" class="alert error"><strong>Something needs attention</strong><span>{{error}}</span><button @click="error=''">×</button></div>
           <div v-if="notice" role="status" class="alert notice"><span>{{notice}}</span><button @click="notice=''">×</button></div>
@@ -236,11 +364,49 @@ createApp({
           <template v-else-if="page==='investigations'">
             <div class="page-heading"><div><div class="eyebrow">CASEWORK / HUMAN REVIEW</div><h1>Investigations<span class="heading-dot">.</span></h1><p>Private local analysis. No automatic accusations or publication.</p></div><button v-if="selectedCase" class="btn outline" @click="caseBack()">← All investigations</button></div>
             <template v-if="!selectedCase"><div class="toolbar"><input v-model="search" type="search" placeholder="Search investigation title or notes…" aria-label="Search investigations"><select v-model="statusFilter" aria-label="Filter investigations"><option value="all">All statuses</option><option value="investigating">Investigating</option><option value="needs_context">Needs context</option><option value="dismissed">Dismissed</option><option value="closed">Closed</option></select><span class="results-count">{{filteredCases.length}} investigations</span></div><div v-if="!filteredCases.length" class="panel empty-state"><span>▤</span><strong>No investigations found</strong><p>Start one from a candidate in the detection queue. Cases are created only when requested by a human.</p><button class="btn primary" @click="navigate('detections')">Open detection queue →</button></div><article v-for="item in filteredCases" :key="item.id" class="case-row" @click="selectCase(item)" @keydown.enter="selectCase(item)" role="button" tabindex="0"><div class="case-badge">▤</div><div class="case-row-main"><strong>{{item.title}}</strong><span>{{item.id}} · Updated {{prettyDate(item.updated_at)}}</span></div><span :class="['status',statusClass(item.status)]">{{statusLabel(item.status)}}</span><span class="case-arrow">↗</span></article></template>
-            <template v-else><div class="case-header panel"><div><div class="eyebrow">{{selectedCase.id}}</div><h3>{{selectedCase.title}}</h3><p>Linked to candidate cluster {{selectedCase.cluster_id}}</p></div><span :class="['status',statusClass(selectedCase.status)]">{{statusLabel(selectedCase.status)}}</span></div><div class="case-layout"><section class="panel review-form"><div class="eyebrow">INVESTIGATOR WORKSHEET</div><h3>Document your review</h3><label for="case-title">Investigation title</label><input id="case-title" v-model="draft.title" maxlength="120" placeholder="Short descriptive title"><label for="case-status">Review status</label><select id="case-status" v-model="draft.status"><option value="investigating">Investigating</option><option value="needs_context">Needs context</option><option value="dismissed">Dismissed</option><option value="closed">Closed</option></select><label for="case-notes">Evidence assessment &amp; reviewer notes</label><textarea id="case-notes" v-model="draft.notes" maxlength="5000" rows="6" placeholder="What does the evidence actually show? What is still unknown?"></textarea><label for="case-alt">Alternative or non-malicious explanations</label><textarea id="case-alt" v-model="draft.alternative_explanation" maxlength="5000" rows="4" placeholder="e.g. legitimate coordination, news sharing, copy-and-paste…"></textarea><p class="small-note">Closing or dismissing requires at least 10 characters of notes. Saving does not publish a report.</p><button class="btn primary" :disabled="saving" @click="saveReview()">{{saving?'Saving…':'Save investigation'}}</button></section><aside class="case-side"><section class="panel"><div class="eyebrow">LINKED SIGNAL</div><h3>Supporting evidence</h3><template v-if="caseCluster"><p class="quoted-text">“{{caseCluster.sample_text}}”</p><div class="detail-pair"><span>Distinct actors</span><b>{{caseCluster.distinct_actors}}</b></div><div class="detail-pair"><span>Supporting posts</span><b>{{caseCluster.post_count}}</b></div><button class="btn outline wide" @click="inspectCluster(caseCluster)">Inspect source records ↗</button></template><p v-else>Cluster no longer detected. The local investigation record is preserved.</p></section><section class="panel"><div class="eyebrow">LOCAL AUDIT LOG</div><h3>Case activity</h3><div v-for="event in selectedCase.events" :key="event.id" class="event"><span class="event-bullet"></span><div><b>{{event.summary}}</b><small>{{prettyDate(event.created_at)}}</small></div></div><p class="small-note">Records changes, not reviewer identity. Authentication is not implemented in this local prototype.</p></section></aside></div></template>
+            <template v-else><div class="case-header panel"><div><div class="eyebrow">{{selectedCase.id}}</div><h3>{{selectedCase.title}}</h3><p>Linked to candidate cluster {{selectedCase.cluster_id}}</p></div><span :class="['status',statusClass(selectedCase.status)]">{{statusLabel(selectedCase.status)}}</span></div><div class="case-layout"><section class="panel review-form"><div class="eyebrow">INVESTIGATOR WORKSHEET</div><h3>Document your review</h3><label for="case-title">Investigation title</label><input id="case-title" v-model="draft.title" maxlength="120" placeholder="Short descriptive title"><label for="case-status">Review status</label><select id="case-status" v-model="draft.status"><option value="investigating">Investigating</option><option value="needs_context">Needs context</option><option value="dismissed">Dismissed</option><option value="closed">Closed</option></select><label for="case-notes">Evidence assessment &amp; reviewer notes</label><textarea id="case-notes" v-model="draft.notes" maxlength="5000" rows="6" placeholder="What does the evidence actually show? What is still unknown?"></textarea><label for="case-alt">Alternative or non-malicious explanations</label><textarea id="case-alt" v-model="draft.alternative_explanation" maxlength="5000" rows="4" placeholder="e.g. legitimate coordination, news sharing, copy-and-paste…"></textarea><p class="small-note">Closing or dismissing requires at least 10 characters of notes. Saving does not publish a report.</p><button class="btn primary" :disabled="saving" @click="saveReview()">{{saving?'Saving…':'Save investigation'}}</button><button class="btn outline" style="margin-left:10px" @click="openLab(selectedCase.id)">⚗ Open Evidence Lab →</button></section><aside class="case-side"><section class="panel"><div class="eyebrow">LINKED SIGNAL</div><h3>Supporting evidence</h3><template v-if="caseCluster"><p class="quoted-text">“{{caseCluster.sample_text}}”</p><div class="detail-pair"><span>Distinct actors</span><b>{{caseCluster.distinct_actors}}</b></div><div class="detail-pair"><span>Supporting posts</span><b>{{caseCluster.post_count}}</b></div><button class="btn outline wide" @click="inspectCluster(caseCluster)">Inspect source records ↗</button></template><p v-else>Cluster no longer detected. The local investigation record is preserved.</p></section><section class="panel"><div class="eyebrow">LOCAL AUDIT LOG</div><h3>Case activity</h3><div v-for="event in selectedCase.events" :key="event.id" class="event"><span class="event-bullet"></span><div><b>{{event.summary}}</b><small>{{prettyDate(event.created_at)}}</small></div></div><p class="small-note">Records changes, not reviewer identity. Authentication is not implemented in this local prototype.</p></section></aside></div></template>
+          </template>
+
+          <template v-else-if="page==='laboratory'">
+            <div class="page-heading"><div><div class="eyebrow">EVIDENCE / LOCAL ANALYSIS</div><h1>Evidence Laboratory<span class="heading-dot">.</span></h1><p>Collect source references, compare timelines, inspect domains, and export reproducible research bundles.</p></div><div class="lab-actions"><button class="btn outline" @click="refreshLab()" :disabled="labBusy">↻ Refresh lab</button><button class="btn outline" @click="exportLab('json')" :disabled="!lab||labBusy">↓ Export JSON</button><button class="btn outline" @click="exportLab('csv')" :disabled="!lab||labBusy">↓ Export CSV</button></div></div>
+            <div class="notice-strip lab-warning">⚠ <b>Local analyst workspace.</b> Source URLs and times are supplied by the investigator, not fetched or verified by OIO. No bot verdicts, ownership attribution, internet lookup, or public publication.</div>
+            <div v-if="!cases.length" class="panel empty-state"><span>⚗</span><strong>Open an investigation first</strong><p>Evidence lives inside a human-reviewed investigation. Choose a detected pattern and start an investigation.</p><button class="btn primary" @click="navigate('detections')">Go to detection queue →</button></div>
+            <template v-else>
+              <section class="panel lab-case-selector"><div><div class="eyebrow">ACTIVE INVESTIGATION</div><h3>{{lab?.investigation?.title || 'Select an investigation'}}</h3><p class="small-note">References stay linked to their case; review statuses remain managed in Investigations.</p></div><select v-model="labCaseId" @change="refreshLab()" aria-label="Choose investigation for evidence analysis"><option v-for="item in cases" :key="item.id" :value="item.id">{{item.title}}</option></select></section>
+              <template v-if="lab">
+                <div class="lab-stats"><article class="lab-stat"><span>Detected source posts</span><strong>{{lab.source_posts.length}}</strong><small>Detector-linked posts</small></article><article class="lab-stat"><span>Analyst references</span><strong>{{lab.evidence_items.length}}</strong><small>Manually recorded</small></article><article class="lab-stat"><span>Dated observations</span><strong>{{lab.timeline.length}}</strong><small>UTC timeline events</small></article><article class="lab-stat"><span>Shared content</span><strong>{{lab.cluster?.distinct_actors || '—'}}</strong><small>Distinct source/actor pairs</small></article></div>
+                <div class="lab-grid">
+                  <section class="panel lab-editor"><div class="eyebrow">01 / EVIDENCE COLLECTOR</div><h3>Attach a public source reference</h3><p class="small-note">This records metadata and a SHA-256 integrity fingerprint. It does not archive a page, prove authenticity, or make a network request.</p>
+                    <form @submit.prevent="saveEvidence()"><div class="lab-form-row"><label>Evidence category<select v-model="evidenceForm.kind"><option value="observation">Observation</option><option value="context">Context</option><option value="counterevidence">Counterevidence</option></select></label><label>Observed at (local time, optional)<input v-model="evidenceForm.observed_at" type="datetime-local"></label></div>
+                      <label>Descriptive title<input v-model="evidenceForm.title" maxlength="160" required placeholder="e.g. Public response to announcement"></label>
+                      <label>Public source URL<input v-model="evidenceForm.source_url" maxlength="2048" type="url" required placeholder="https://example.org/public-record"></label>
+                      <label>What does this source show?<textarea v-model="evidenceForm.notes" maxlength="4000" rows="4" placeholder="Describe observations and uncertainties. Do not copy private information."></textarea></label>
+                      <label class="lab-checkbox"><input v-model="permissionConfirmed" type="checkbox"><span>I have permission to use and retain these public references for this local investigation.</span></label>
+                      <button class="btn primary" type="submit" :disabled="labSaving||!permissionConfirmed">{{labSaving?'Saving…':'＋ Add evidence reference'}}</button>
+                    </form>
+                    <div class="lab-divider"></div><div class="eyebrow">BATCH INGESTION</div><h3>Import permitted references</h3><p class="small-note">CSV or JSON list, up to 100 records / 128 KiB. Fields: <code>kind,title,source_url,observed_at,notes</code>. Every row is validated before storage; duplicates are skipped.</p>
+                    <div class="lab-form-row"><label>Format<select v-model="importFormat"><option value="csv">CSV</option><option value="json">JSON</option></select></label><label>Choose file<input type="file" accept=".json,.csv,text/csv,application/json" @change="onImportFile($event)"></label></div><p class="small-note">{{importFilename || 'No import file selected'}}</p><button class="btn outline" :disabled="labSaving||!permissionConfirmed||!importContent" @click="importReferences()">↑ Import evidence file</button>
+                  </section>
+                  <section class="panel lab-timeline-panel"><div class="eyebrow">02 / TIMELINE ANALYZER</div><div class="panel-heading"><h3>Observed activity over time</h3><select v-model="timelineUnit" aria-label="Timeline granularity"><option value="minute">Minute</option><option value="hour">Hour</option><option value="day">Day</option></select></div><p class="small-note">Teal = detector posts. Blue = investigator-supplied timestamps. Bars represent observations, not verified bot activity.</p>
+                    <div v-if="!displayedTimeline.length" class="lab-chart-empty">No timestamps available for this case.</div><div v-else class="lab-chart" role="img" :aria-label="'Timeline with '+timeline.length+' nonempty time buckets'"><div v-for="bucket in displayedTimeline" :key="bucket.key" class="lab-chart-col" :title="bucket.key+' UTC · '+bucket.posts+' posts · '+bucket.references+' manual references'"><div class="lab-chart-bar"><span class="lab-bar-reference" :style="{height:(bucket.references/maxTimelineCount*100)+'%'}"></span><span class="lab-bar-posts" :style="{height:(bucket.posts/maxTimelineCount*100)+'%'}"></span></div><span class="lab-chart-label">{{bucket.key.slice(11)||bucket.key.slice(5)}}</span></div></div>
+                    <div class="lab-legend"><span><i class="lab-dot posts"></i>Detected posts</span><span><i class="lab-dot references"></i>Manual timestamps</span></div><p v-if="timeline.length>32" class="small-note">Showing the 32 latest non-empty buckets ({{timeline.length}} total).</p>
+                    <div class="lab-divider"></div><div class="eyebrow">03 / DOMAIN ANALYSIS</div><h3>Publicly referenced domains</h3><p class="small-note">A shared hostname is not evidence of hosting location or common account ownership. These categories must not be combined.</p>
+                    <div class="lab-domain-group"><h4>Manually attached sources</h4><p v-if="!lab.domains.manual_reference_hosts.length" class="small-note">No references attached</p><div v-for="d in lab.domains.manual_reference_hosts" :key="d.domain" class="lab-domain-row"><code>{{d.domain}}</code><b>{{d.count}}</b></div></div>
+                    <div class="lab-domain-group"><h4>Detector source-record hosts</h4><p v-if="!lab.domains.post_record_hosts.length" class="small-note">No source records</p><div v-for="d in lab.domains.post_record_hosts" :key="d.domain" class="lab-domain-row"><code>{{d.domain}}</code><b>{{d.count}}</b></div></div>
+                    <div class="lab-domain-group"><h4>Links included inside source post text</h4><p v-if="!lab.domains.post_text_link_hosts.length" class="small-note">None in this case's post text</p><div v-for="d in lab.domains.post_text_link_hosts" :key="d.domain" class="lab-domain-row"><code>{{d.domain}}</code><b>{{d.count}}</b></div></div>
+                  </section>
+                </div>
+                <section class="panel lab-registry"><div class="panel-heading"><div><div class="eyebrow">04 / EVIDENCE REGISTER</div><h3>Research references <span class="sub-count">{{lab.evidence_items.length}}</span></h3></div><select v-model="evidenceFilter" aria-label="Filter evidence category"><option value="all">All categories</option><option value="observation">Observations</option><option value="context">Context</option><option value="counterevidence">Counterevidence</option></select></div>
+                  <p v-if="!filteredEvidence.length" class="small-note">No matching references yet. Add a source URL above or import a permitted CSV/JSON evidence list.</p>
+                  <div v-for="item in filteredEvidence" :key="item.id" class="lab-evidence-item"><div class="lab-evidence-head"><div><span :class="['lab-kind','lab-kind-'+item.kind]">{{item.kind}}</span><strong>#{{item.id}} · {{item.title}}</strong></div><button class="btn danger-quiet" :disabled="labSaving" @click="removeEvidence(item)">Remove</button></div><p v-if="item.notes" class="lab-item-notes">{{item.notes}}</p><a :href="item.source_url" target="_blank" rel="noopener noreferrer">{{item.source_url}} ↗</a><div class="lab-meta"><span>Observed: {{prettyDate(item.observed_at)}}</span><span>Added: {{prettyDate(item.captured_at)}}</span><span title="SHA-256 fingerprint of the canonical evidence metadata">SHA-256: <code>{{item.sha256}}</code></span></div></div>
+                </section>
+                <div class="lab-grid lab-footer-grid"><section class="panel"><div class="eyebrow">05 / DETECTOR PROVENANCE</div><h3>Linked source posts</h3><div class="table-wrap"><table><thead><tr><th>ACTOR</th><th>SOURCE</th><th>TIME</th><th>RECORD</th></tr></thead><tbody><tr v-for="post in lab.source_posts" :key="post.id"><td>{{post.actor}}</td><td>{{post.source}}</td><td>{{prettyDate(post.created_at)}}</td><td><a :href="post.url" target="_blank" rel="noopener noreferrer">Source ↗</a></td></tr></tbody></table></div><p class="small-note">Synthetic example.org sources remain placeholders. No automated attribution.</p></section><section class="panel"><div class="eyebrow">06 / RESEARCH BUNDLE</div><h3>Reproducible local export</h3><p class="small-note">JSON includes investigation status and notes, review audit history, source-record snapshots, SHA-256 metadata fingerprints and the detector parameters. CSV contains the post and evidence register, with spreadsheet formula escaping.</p><button class="btn primary" @click="exportLab('json')">↓ Download JSON snapshot</button><button class="btn outline" @click="exportLab('csv')">↓ Download evidence CSV</button><p class="small-note">An integrity hash can detect changes to exported metadata, but cannot prove that a remote page was authentic.</p></section></div>
+              </template>
+            </template>
           </template>
 
           <template v-else-if="page==='methodology'"><div class="page-heading"><div><div class="eyebrow">TRANSPARENT METHODS</div><h1>How OIO works<span class="heading-dot">.</span></h1><p>Understand the engine's limitations before interpreting a candidate.</p></div></div><div class="method-grid"><article class="panel"><div class="method-number">01</div><h3>Normalize text</h3><p>Lowercase text, strip URLs, collapse whitespace, then compute a SHA-256 fingerprint. Similar meaning with different wording is not detected.</p></article><article class="panel"><div class="method-number">02</div><h3>Group within time</h3><p>Matching text is grouped into non-overlapping 180-second windows anchored to the earliest post, avoiding simple chain-bridging.</p></article><article class="panel"><div class="method-number">03</div><h3>Flag candidate signals</h3><p>A group must contain at least three distinct source/actor pairs. The detector does not determine whether an actor is human or automated.</p></article><article class="panel"><div class="method-number">04</div><h3>Document alternatives</h3><p>Analysts review source records, legitimate explanations and counterevidence. Their notes and status changes are stored locally.</p></article></div><div class="notice-strip large">⚠ This prototype is not an attribution engine, a bot classifier, or a live surveillance tool. It does not identify illegal data centres or private operators. Keep it on localhost until authentication, retention, source permissions and governance are independently addressed.</div></template>
-          <footer>OIO v0.2 · Synthetic research dataset · Evidence over assumptions · Never a bot verdict</footer>
+          <footer>OIO v0.3 · Local research mode · Evidence over assumptions · Never a bot verdict</footer>
         </main>
       </div>
     </div>

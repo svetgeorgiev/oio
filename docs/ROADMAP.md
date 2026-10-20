@@ -1,49 +1,49 @@
 # OIO Master Roadmap
 
 ## v0.1 — validated synthetic-data foundation
+- [x] Vue dashboard, Python localhost API, SQLite persistence
+- [x] Idempotent sample ingestion; exact normalized-text/180-second candidates
+- [x] Supporting source references and backend tests
 
-- [x] Vue dashboard, Python standard-library localhost API, SQLite persistence
-- [x] Idempotent sample ingestion and exact-text / 180-second coordination candidates
-- [x] Candidate evidence records and tests
+## v0.2 — Investigation Workspace
+- [x] Overview, Detection Queue, Network Explorer, Investigations and Methodology
+- [x] Status/search filtering, graph of candidate text and synthetic actors
+- [x] Create/reopen local cases, statuses, notes, alternate explanations, audit events
+- [x] SQLite migration preserving earlier data, origin checks and API tests
+- [x] Manually verified on Windows; backend tests and Vite production build passed
 
-## v0.2 — Investigation Workspace (this patch)
+## v0.3 — Evidence Laboratory (current patch; local validation pending)
+- [x] Add evidence register with observation, context and counterevidence categories
+- [x] Optional claimed observation time, public source URL, metadata SHA-256
+- [x] Bounded/atomic CSV+JSON metadata import, permission acknowledgement, deduplication
+- [x] Timeline with distinct detector vs analyst observations (minute/hour/day)
+- [x] Domain analysis with separate source-record, manual, and embedded-link categories
+- [x] JSON research snapshot export + safe CSV register
+- [x] Local evidence deletion with audit reason, additive SQLite schema migration
+- [x] Backend/API/unit and JS helper tests; local API Host protection
+- [ ] Validate full Vue UI and production build on developer's WebStorm environment
+- [ ] Add evidence provenance quality controls and negative/false-positive benchmarks
+- [ ] Accessible graph navigation and paginated datasets for higher scale
 
-- [x] Redesigned workspace: Overview, Detection Queue, Network Explorer, Investigations and Methodology
-- [x] Search and status filters for local candidates and cases
-- [x] Graph linking a candidate text fingerprint to synthetic actor identifiers
-- [x] Local case creation, reopen existing investigation, status transitions
-- [x] Notes and alternative explanations; reason required for dismissal/closure
-- [x] Case creation/edit audit trail (local events only)
-- [x] SQLite additive migration preserving v0.1 data
-- [x] Local API request validation, clean shutdown, HTTP integration tests
-- [ ] UI tested and signed off on developer Windows/WebStorm environment
-- [ ] Frontend converted to Vue single-file components via build-time compilation (not needed for v0.2 prototype)
+## v0.4 — permitted public-data pilot (planning; **not implemented**)
+- [ ] Document licensing/terms, retention policy and lawful access for one candidate source
+- [ ] Source adapter behind permission gates with bounded ingestion and backoff
+- [ ] Assess data protection obligations and platform restrictions
+- [ ] Independent accuracy, bias, and privacy evaluation using known benign coordination
+- [ ] Explicit backup/restore and retention controls for cases
 
-## v0.3 — reliability and controlled research preparation
+## v0.5+
+- [ ] Robust content similarity, time-series comparison and network analysis with counterfactual tests
+- [ ] Stronger reviewer workflows, independent sign-off, and publication risk assessment
+- [ ] Authentication/roles, quotas, auditing and privacy enforcement **before** any multi-user hosting
+- [ ] Accessible researcher documentation and independent methodology replication
 
-- [ ] Threat modelling: localhost cross-origin protection, operational boundaries, abuse cases
-- [ ] Authentication and role-based authorization before any multi-user deployment
-- [ ] Data retention/deletion workflows, backup/restore, exportable case evidence bundles
-- [ ] Provenance integrity checks, evidence snapshots, reproducibility metadata
-- [ ] Methodology evaluation with false-positive and negative controls
-- [ ] Paginated candidate views for larger datasets; performance testing
-- [ ] Accessible keyboard-friendly graph and investigative navigation improvements
-- [ ] Source permission review and impact assessment before handling non-synthetic data
+## v1.0 — separate public transparency portal (after safeguards)
+- [ ] Reviewed campaign-level reporting with limitations and counterevidence
+- [ ] Publication approval and redaction, corrections and appeals
+- [ ] External methodology and governance review
 
-## v0.4 — permissioned source pilot (only after governance review)
-
-- [ ] One approved data-source adapter with bounded ingestion and documented permission basis
-- [ ] Background jobs, backoff, monitoring and data-quality alerting
-- [ ] Independent accuracy / privacy review
-
-## v1.0 — public transparency portal (separate from researcher workspace)
-
-- [ ] Reviewed campaign-level reporting, documented uncertainties and alternatives
-- [ ] Publication approval, redaction, correction and appeals workflow
-- [ ] Public methodology, audit process and evaluation summaries
-
-## Out of scope
-
-- Private identity attribution, unauthorized access, doxxing, covert surveillance
-- Unreviewed public account accusations and automated public blacklists
-- Server intrusion, scraping around access controls and unconsented data aggregation
+## Explicitly out of scope
+- Private identity attribution, unauthorized access, account doxxing, covert surveillance
+- Server intrusion, bypassing platform controls, automated accusations or blacklists
+- Claims that a matching domain reveals a data centre or server operator

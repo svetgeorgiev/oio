@@ -1,0 +1,3 @@
+kind,title,source_url,observed_at,notes
+context,Synthetic news-sharing context,https://example.org/demo/context,2026-10-20T08:01:20Z,"Illustrative alternative explanation: normal users may independently quote an announcement. Not independently verified."
+counterevidence,Synthetic independent follow-up,https://example.org/demo/followup,2026-10-20T08:04:00Z,"Illustrative reference that may support a non-malicious explanation. Does not prove intent or coordination."

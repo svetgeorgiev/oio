@@ -1,4 +1,4 @@
-"""OIO v0.2 standard-library tests. Run: python -m unittest discover -v"""
+"""OIO v0.3 standard-library tests. Run: python -m unittest discover -v"""
 import http.client
 import json
 import os
@@ -124,7 +124,7 @@ class InvestigationTests(InvestigationFixture, unittest.TestCase):
                 c.execute("INSERT INTO reviews VALUES ('legacy','unreviewed','existing note','2026-10-20T08:00:00Z')")
                 c.commit()
             with database() as c:
-                self.assertEqual(c.execute('PRAGMA user_version').fetchone()[0], 2)
+                self.assertEqual(c.execute('PRAGMA user_version').fetchone()[0], 3)
                 self.assertEqual(c.execute('SELECT notes FROM reviews WHERE cluster_id=?', ('legacy',)).fetchone()[0], 'existing note')
                 self.assertEqual(c.execute('SELECT count(*) FROM investigations').fetchone()[0], 0)
 
@@ -170,6 +170,48 @@ class APITests(InvestigationFixture, unittest.TestCase):
         self.assertEqual(saved['investigation']['status'], 'needs_context')
         self.assertEqual(self.request('GET', '/api/investigations')[1]['investigations'][0]['id'], identifier)
         self.assertEqual(self.request('GET', f'/api/investigations/{identifier}')[1]['investigation']['id'], identifier)
+
+    def test_dns_rebinding_host_header_is_rejected(self):
+        self.assertEqual(self.request('GET', '/api/stats', headers={'Host': 'evil.example'})[0], 403)
+        self.assertEqual(self.request('POST', '/api/load-fixture', headers={'Host': 'evil.example'})[0], 403)
+
+    def test_evidence_api_roundtrip_export_and_deletion(self):
+        status, created = self.request('POST', '/api/investigations', {'cluster_id': self.cluster_id})
+        self.assertEqual(status, 201)
+        identifier = created['investigation']['id']
+        evidence = {'kind': 'context', 'title': 'Independent context',
+                    'source_url': 'https://example.org/context', 'notes': 'Possible ordinary news sharing',
+                    'observed_at': '2026-10-20T09:00:00Z'}
+        route = f'/api/investigations/{identifier}/lab'
+        self.assertEqual(self.request('POST', route + '/evidence',
+            {'permission_confirmed': True, 'evidence': evidence})[0], 201)
+        status, response = self.request('GET', route)
+        self.assertEqual(status, 200)
+        self.assertEqual(len(response['lab']['evidence_items']), 1)
+        item = response['lab']['evidence_items'][0]
+        self.assertEqual(item['title'], evidence['title'])
+        self.assertEqual(len(response['lab']['timeline']), 4)
+        status, exported = self.request('GET', route + '/export')
+        self.assertEqual(status, 200)
+        self.assertEqual(exported['format'], 'oio-evidence-snapshot')
+        self.assertEqual(len(exported['source_posts']), 3)
+        self.assertEqual(self.request('POST', route + f'/evidence/{item["id"]}/delete',
+            {'reason': 'Reference no longer relevant'})[0], 200)
+        self.assertEqual(self.request('GET', route)[1]['lab']['evidence_items'], [])
+
+    def test_evidence_api_rejects_unpermitted_or_malformed_items(self):
+        identifier = self.request('POST', '/api/investigations',
+                                  {'cluster_id': self.cluster_id})[1]['investigation']['id']
+        route = f'/api/investigations/{identifier}/lab'
+        evidence = {'kind': 'observation', 'title': 'Public item', 'source_url': 'https://example.org'}
+        self.assertEqual(self.request('POST', route + '/evidence',
+            {'permission_confirmed': False, 'evidence': evidence})[0], 400)
+        self.assertEqual(self.request('POST', route + '/evidence',
+            {'permission_confirmed': True, 'evidence': {**evidence, 'source_url': 'http://localhost/private'}})[0], 400)
+        self.assertEqual(self.request('GET', '/api/investigations/missing/lab')[0], 404)
+        self.assertEqual(self.request('POST', route + '/import', {'permission_confirmed': True,
+            'format': 'json', 'content': '[{}]'})[0], 400)
+        self.assertEqual(self.request('GET', route)[1]['lab']['evidence_items'], [])
 
     def test_bad_requests_are_rejected(self):
         self.assertEqual(self.request('POST', '/api/investigations', {'cluster_id': self.cluster_id},

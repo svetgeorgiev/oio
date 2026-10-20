@@ -1,98 +1,107 @@
 # Open Influence Observatory (OIO)
 
-**v0.2 — Investigation Workspace (local-only research prototype).** OIO is an evidence-first research tool for investigating patterns of *potentially* coordinated public posting. It is **not** a bot classifier, attribution engine or public accusation platform.
+**v0.3 — Evidence Laboratory (local-only research prototype).** OIO is an evidence-first tool for exploring candidate patterns of coordinated public posting. It is **not** a bot classifier, network attribution tool or a public allegation platform.
 
-## What changed in v0.2
+## What's available
 
-- Sidebar workspace: Overview, Detection queue, Network explorer, Investigations, Methodology
-- Candidate search and review-status filters
-- Interactive relationship diagram for accounts sharing exact normalized text (synthetic fixture)
-- Create one local investigation per candidate cluster; reopen existing ones without duplicates
-- Editable title, status, reviewer notes and alternative explanations
-- Append-only local activity log of case creation/field changes (no user identity recording)
-- SQLite schema migration preserving v0.1 posts and legacy reviews
-- Better API errors, bounded JSON bodies, origin check on writes, graceful Ctrl+C shutdown
-- More backend unit and HTTP integration tests
+- **v0.1:** idempotent synthetic fixture ingestion, exact normalized-text signals in a three-minute window, SQLite persistence.
+- **v0.2:** Vue investigation workspace, detection queue, network graph, case reviews, alternative explanations and local audit events.
+- **v0.3:** Evidence Laboratory for a specific investigation:
+  - Manually attach a public source URL with an evidence category (observation/context/counterevidence), description, optional claimed observation time and notes.
+  - Import permitted evidence **metadata** in CSV or JSON (1–100 entries per upload, 128 KiB max), validated transactionally with duplicate detection.
+  - Show detector posts separately from analyst-submitted references; never treat the two as equivalent sources.
+  - Analyze minute/hour/day **observation timelines**, keeping analyst-supplied timestamps separate from detector timestamps.
+  - Inspect public hostnames split into **source-record hosts**, **manual source-reference hosts**, and **domains embedded in post text**. No DNS lookup or web request occurs.
+  - Export JSON research snapshots with method parameters, detector-linked source posts, case review notes, audit history and SHA-256 hashes of local evidence metadata. Export spreadsheet-safe CSV evidence registers.
+  - Remove incorrectly saved manual evidence with a reason; an audit event records the removal, but the evidence metadata is deleted.
+  - SQLite additive v0.3 migration preserving existing v0.1/v0.2 records and cases.
 
-**Important:** OIO still accepts *only* the bundled synthetic fixture. There is no live social media ingestion, AI bot verdict, public publishing, login, authorization or deployed server. Keep the backend bound to loopback.
+This version **does not** collect live social media data, scrape pages, archive website content, authenticate analysts, check whether sources are accurate, identify server operators, or publicly publish findings. **Do not deploy it on a public interface.**
 
-## Requirements
+## Install on Windows / WebStorm
 
-- Windows with Python 3.10+ and Node.js 20+ (also works on other OSes)
-- npm
-- Existing v0.1 checkout, updated with files from the v0.2 ZIP
+Requires Python 3.10+, Node.js 20+, npm. Stop the backend and frontend before replacing files.
 
-## Install the v0.2 patch into the existing project
-
-1. **Stop** the backend and Vite frontend.
-2. **Back up your database.** With both servers stopped, copy `data.sqlite3` (and any present `data.sqlite3-wal` / `data.sqlite3-shm` files) somewhere outside the repository. Do not delete local SQLite files.
-3. Extract the ZIP **into the OIO project root**, e.g. `D:\WebstormProjects\oio`, preserving folders and choosing **replace existing files**.
-4. The ZIP contains only files changed/added for v0.2; it does **not** contain `node_modules`, local databases, source fixtures, or Git metadata.
-5. Run the two development servers below. Migration runs on first database access automatically.
-
-**Terminal 1 (backend)**
+1. Back up your existing SQLite database with both servers stopped. At project root copy `data.sqlite3` **and any current** `data.sqlite3-wal` / `data.sqlite3-shm` companions outside the repository. Do not delete them from the working copy. SQLite's journal mode is WAL.
+2. Extract **OIO-v0.3-Evidence-Laboratory-PATCH.zip** directly into `D:\WebstormProjects\oio`, preserving folders and replacing existing files. It only contains changed/new files; it does not include databases, `node_modules`, or Git metadata.
+3. Start the Python API:
 
 ```powershell
 cd D:\WebstormProjects\oio\backend
 python app.py
 ```
 
-**Terminal 2 (frontend)**
+4. In another terminal, start Vue:
 
 ```powershell
 cd D:\WebstormProjects\oio\frontend
 npm run dev
 ```
 
-If dependencies are not already installed locally, run `npm install` in `frontend` first. No new npm dependencies are needed for this patch.
+Visit http://127.0.0.1:5173. The backend stays bound to http://127.0.0.1:8765. This patch adds **no third-party dependencies**. If this is a new checkout, run `npm install` in `frontend` once.
 
-Visit **http://127.0.0.1:5173**. The API remains on `http://127.0.0.1:8765`.
+## Smoke-test the Evidence Laboratory
 
-## Testing
+1. Confirm your **5 demo posts / 1 cluster** and existing investigation remain after upgrade. If this is a new install, use **Load demo data**, then open a case from Detection Queue.
+2. Open **Evidence Laboratory** from the sidebar or the investigation worksheet. Select the case.
+3. Confirm the timeline shows **3 detected source posts**, no manual evidence, and a source-record hostname `example.org` (demonstration placeholder).
+4. Check the permission box, then add a manual `context` reference using `https://example.org/demo/context`, a descriptive title and some notes. Leave observation time empty or choose a time. Save.
+5. Confirm the new evidence appears with a SHA-256 hash and that the timeline only adds an analyst-reference observation **if you supplied a time**.
+6. Download both JSON and CSV exports; open them and inspect separate `source_posts` and `evidence_items` fields in the JSON, and the escaped CSV cells.
+7. Try importing `fixtures/sample_evidence.csv` (included in the ZIP). Import it twice: the second attempt should insert zero duplicates (or only new records if you manually added a different reference first).
+8. Test **Remove**. A reason shorter than 10 characters should be rejected. A longer reason removes the item and adds an audit event.
+9. Restart the backend. References, remaining cases and timestamps should persist. The old v0.2 case-review actions should still work.
+
+## Automated tests
 
 ```powershell
 cd D:\WebstormProjects\oio\backend
 python -m unittest discover -v
 
 cd ..\frontend
+node --test src\lab-utils.test.js
 npm run build
 ```
 
-Smoke-test the UI:
+The frontend currently uses runtime Vue template compilation through the existing `vite.config.js` alias; this patch does not replace your working Vite setup. **The package name's npm version banner is still 0.1.0 from the original prototype; the API and application footer report 0.3.0.** Package metadata cleanup can be done separately.
 
-1. Overview loads with previous 5 demo posts / 1 cluster (if v0.1 data exists).
-2. Clicking **Load demo data** again does not increase the ingested post count.
-3. Detection queue shows the unreviewed cluster; search and filters work.
-4. Network explorer shows the central shared-text node and three separate synthetic actors. Clicking an actor filters supporting records.
-5. **Start investigation** creates a case; repeat action reopens it without a duplicate.
-6. Enter notes and an alternative explanation; set status to **Needs context**, then save.
-7. Try **Dismissed** with fewer than 10 characters of reviewer notes: the API should reject it.
-8. Add adequate notes and save **Dismissed** or **Closed**; an audit event appears.
-9. Stop and restart Python: the posts, case, status and notes should persist.
+## Evidence metadata schema
 
-## API (all local only)
+Manual entry (or CSV header keys): `kind`, `title`, `source_url`, `observed_at`, `notes`.
 
-| Method | Endpoint | Meaning |
-| --- | --- | --- |
-| GET | `/api/health` | Version and local mode |
-| GET | `/api/stats` | Aggregate counts |
-| GET | `/api/clusters` | Detected candidates and synthetic evidence |
-| GET | `/api/clusters/{id}` | One candidate |
-| GET | `/api/investigations` | Private local cases |
-| GET | `/api/investigations/{id}` | Case details and audit log |
-| POST | `/api/load-fixture` | Idempotent synthetic import |
-| POST | `/api/investigations` | Create/reopen case; body `{ "cluster_id": "..." }` |
-| POST | `/api/investigations/{id}/review` | Update approved review fields |
+```json
+[
+  {
+    "kind": "context",
+    "title": "Public context example",
+    "source_url": "https://example.org/demo/context",
+    "observed_at": "2026-10-20T08:01:00Z",
+    "notes": "Synthetic illustration; not independently verified"
+  }
+]
+```
 
-## Detection methodology
+`kind`: `observation`, `context`, `counterevidence`. `source_url`: valid public http(s) URL, no embedded credentials or local/private IP. `observed_at`: optional ISO 8601 timestamp **with timezone**. If you select a date/time through the UI, it is interpreted in your browser's timezone and stored as UTC. `notes` is optional. Batch import is all-or-nothing for validation. Maximum of 500 stored manual references per investigation; repeated identical normalized metadata is deduplicated using its SHA-256 digest.
 
-OIO lowercases posts, removes URLs, collapses whitespace, hashes normalized text and groups identical content into 180-second non-overlapping windows; groups require three distinct `(source, actor)` pairs. A candidate means **only that this pattern matched the rule**. Synchronized legitimate campaigns, memes and news coverage can look the same. The prototype graph is a visual explanation of the grouping, **not proof of shared control**.
+**Important:** SHA-256 covers OIO's normalized **local metadata**, not the live website or the truth of its content. It provides change detection for exported fields, not authentication of remote information. The original source may change or disappear. All manual notes and times remain **analyst claims**.
 
-## Limitations and safety
+## Local API routes added in v0.3
 
-- No authentication, no access controls for local cases; **do not expose this API publicly**.
-- Do not use real private/personal datasets until permissions, data protection requirements, retention rules, user authentication and review governance are implemented.
-- Audit log records edits and timestamps, **not identity or tamper-proof provenance**.
-- Review status is for a *case*, not a verdict about people.
-- Publishing remains intentionally disabled.
-- For the original v0.1 ethics policy, see `docs/ETHICS.md`; planned milestones are in `docs/ROADMAP.md`.
+| Method | Route | Purpose |
+|---|---|---|
+| GET | `/api/investigations/{id}/lab` | Evidence register, source posts, timeline, domains and audit |
+| GET | `/api/investigations/{id}/lab/export` | JSON research snapshot and detector parameters |
+| POST | `/api/investigations/{id}/lab/evidence` | Add manually supplied evidence metadata; permission confirmation required |
+| POST | `/api/investigations/{id}/lab/import` | Import CSV/JSON metadata from user's chosen local file |
+| POST | `/api/investigations/{id}/lab/evidence/{item}/delete` | Delete one manual reference with an audit reason |
+
+Existing v0.1/v0.2 endpoints are unchanged. The localhost API has no login and has bounded JSON requests, same-origin mutation checks and localhost Host checks; these are **not** a substitute for authentication and data governance.
+
+## Principles and caveats
+
+- Detection signals are **not** evidence of bots, criminal conduct, ownership, intent, or orchestration.
+- Matching public domains do not reveal where an account is hosted or who operates it.
+- Never add personal information, confidential material or unauthorized datasets.
+- The demo dataset and example.org URLs are synthetic placeholders.
+- Public publication, automated import of real social network data and independent authentication of posts remain out of scope.
+- See `docs/ETHICS.md`, `docs/ROADMAP.md`, and `docs/RELEASE-v0.3.md`.

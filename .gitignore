@@ -27,3 +27,12 @@ venv/
 
 # Logs
 *.log
+# SQLite databases and journal files
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+
+# Python caches
+__pycache__/
+*.pyc

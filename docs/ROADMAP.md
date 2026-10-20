@@ -1,49 +1,46 @@
-# OIO Master Roadmap
+# OIO Master Roadmap — 20 October 2026
 
-## v0.1 — validated synthetic-data foundation
-- [x] Vue dashboard, Python localhost API, SQLite persistence
-- [x] Idempotent sample ingestion; exact normalized-text/180-second candidates
-- [x] Supporting source references and backend tests
+## v0.1 — synthetic foundation ✅
+- [x] Vue research dashboard, localhost Python API, SQLite persistence
+- [x] Idempotent fixtures, normalized exact-text/180-second candidate detection, tests
 
-## v0.2 — Investigation Workspace
-- [x] Overview, Detection Queue, Network Explorer, Investigations and Methodology
-- [x] Status/search filtering, graph of candidate text and synthetic actors
-- [x] Create/reopen local cases, statuses, notes, alternate explanations, audit events
-- [x] SQLite migration preserving earlier data, origin checks and API tests
-- [x] Manually verified on Windows; backend tests and Vite production build passed
+## v0.2 — Investigation Workspace ✅
+- [x] Detection queue, network explorer, case notes, status reviews, audit events
+- [x] Data-preserving schema migrations, origin checks; tested on Windows
 
-## v0.3 — Evidence Laboratory (current patch; local validation pending)
-- [x] Add evidence register with observation, context and counterevidence categories
-- [x] Optional claimed observation time, public source URL, metadata SHA-256
-- [x] Bounded/atomic CSV+JSON metadata import, permission acknowledgement, deduplication
-- [x] Timeline with distinct detector vs analyst observations (minute/hour/day)
-- [x] Domain analysis with separate source-record, manual, and embedded-link categories
-- [x] JSON research snapshot export + safe CSV register
-- [x] Local evidence deletion with audit reason, additive SQLite schema migration
-- [x] Backend/API/unit and JS helper tests; local API Host protection
-- [ ] Validate full Vue UI and production build on developer's WebStorm environment
-- [ ] Add evidence provenance quality controls and negative/false-positive benchmarks
-- [ ] Accessible graph navigation and paginated datasets for higher scale
+## v0.3 — Evidence Laboratory ✅
+- [x] Manual source URLs and metadata hashing, permission-gated CSV/JSON import
+- [x] Observational timelines and publicly mentioned domains, analyst/source separation
+- [x] Exports, audit on reference deletion; manual testing and commit 0229063
 
-## v0.4 — permitted public-data pilot (planning; **not implemented**)
-- [ ] Document licensing/terms, retention policy and lawful access for one candidate source
-- [ ] Source adapter behind permission gates with bounded ingestion and backoff
-- [ ] Assess data protection obligations and platform restrictions
-- [ ] Independent accuracy, bias, and privacy evaluation using known benign coordination
-- [ ] Explicit backup/restore and retention controls for cases
+## v0.4 — Live Data Research (patch built; developer Windows test pending)
+- [x] Official Bluesky Jetstream `/subscribe` JSON adapter with local keyword filter
+- [x] User-confirmed Start and Stop, no auto-collection on startup/reconnect
+- [x] 15–180-second bounded sessions, 5–200 saved posts, 50,000 streamed-event cap
+- [x] Local telemetry and preserved event provenance (DID, CID-unverified, witnessed time, capture source/session)
+- [x] Idempotent post ingestion, live-post register, existing detector/case integration
+- [x] Local storage cap, 7-day pruning, explicit live-data purge
+- [x] Unit and integration tests using synthetic WebSocket events (no Internet needed)
+- [ ] Validate actual Jetstream connectivity from Windows in a short manual session
+- [ ] Confirm `npm run build` and manual UI Start/Stop/purge; collect observed errors
+- [ ] Review and document legal basis/source policy and data minimization before broader research use
 
-## v0.5+
-- [ ] Robust content similarity, time-series comparison and network analysis with counterfactual tests
-- [ ] Stronger reviewer workflows, independent sign-off, and publication risk assessment
-- [ ] Authentication/roles, quotas, auditing and privacy enforcement **before** any multi-user hosting
-- [ ] Accessible researcher documentation and independent methodology replication
+## v0.5 — Methodology and source reliability
+- [ ] Narrow sampling plans, coverage/denominator reporting, benign-comparison controls
+- [ ] Source validation and deletion-policy checks with permitted endpoints
+- [ ] Explicit uncertainty and false-positive benchmarking before public analysis
+- [ ] Optional case cleanup when source material expires, plus investigator-visible deletion warnings
+- [ ] Longer-running background jobs only after queue, robustness and audit design
 
-## v1.0 — separate public transparency portal (after safeguards)
-- [ ] Reviewed campaign-level reporting with limitations and counterevidence
-- [ ] Publication approval and redaction, corrections and appeals
-- [ ] External methodology and governance review
+## v0.6+ — Privacy, oversight and extensibility
+- [ ] Auth/roles, permissions, quotas, source-specific terms assessments, user request handling
+- [ ] Better network/temporal analysis; test against legitimate news sharing
+- [ ] Public report drafts and independent reviewer sign-off with export redaction
 
-## Explicitly out of scope
-- Private identity attribution, unauthorized access, account doxxing, covert surveillance
-- Server intrusion, bypassing platform controls, automated accusations or blacklists
-- Claims that a matching domain reveals a data centre or server operator
+## v1.0 — Separate public reporting portal (only after review)
+- [ ] Campaign-level documented findings, not automated individual accusations
+- [ ] Human publication authorization, privacy review, appeals, corrections and removals
+- [ ] Reproducibility and governance transparency
+
+## Explicit exclusions
+No intrusion, bypassing platform restrictions, covert surveillance, private identity attribution, targeting accounts for harassment, server-operator identification from hosting IPs, automated political persuasion, public mass account blacklists or automatic bot verdicts.

@@ -1,0 +1,2 @@
+# Only required to start the optional Bluesky Jetstream live collector.
+websocket-client>=1.8,<2

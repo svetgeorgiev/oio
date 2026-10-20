@@ -1,4 +1,4 @@
-import { createApp, computed, onMounted, ref } from 'vue';
+import { createApp, computed, onMounted, onUnmounted, ref } from 'vue';
 import './style.css';
 import { timelineBuckets, snapshotCSV } from './lab-utils.js';
 
@@ -64,6 +64,12 @@ createApp({
     const importFilename = ref('');
     const timelineUnit = ref('minute');
     const evidenceFilter = ref('all');
+    const liveInfo = ref({session: null, active: false, stored_posts: 0, retention_days: 7});
+    const livePosts = ref([]);
+    const liveConfig = ref({keyword: '', region: 'us-east', duration_seconds: 60, max_posts: 100});
+    const livePermission = ref(false);
+    const liveBusy = ref(false);
+    let livePolling = null;
 
     const selectedCluster = computed(() => clusters.value.find(c => c.id === selectedClusterId.value) || null);
     const caseCluster = computed(() => clusters.value.find(c => c.id === selectedCase.value?.cluster_id) || null);
@@ -84,6 +90,9 @@ createApp({
     const filteredEvidence = computed(() => (lab.value?.evidence_items || []).filter(item =>
       evidenceFilter.value === 'all' || item.kind === evidenceFilter.value));
     const reviewCount = computed(() => clusters.value.filter(c => !c.investigation_id).length);
+    const liveSession = computed(() => liveInfo.value?.session || null);
+    const liveElapsed = computed(() => liveSession.value?.started_at ? Math.max(0, Math.floor(
+      (Date.now() - new Date(liveSession.value.started_at).getTime()) / 1000)) : 0);
     const graphNodes = computed(() => {
       if (!selectedCluster.value) return [];
       const identities = [...new Map(selectedCluster.value.evidence.map(p => [p.source + ':' + p.actor, p])).values()];
@@ -112,6 +121,59 @@ createApp({
         error.value = e.message;
       } finally { loading.value = false; }
     }
+
+    async function refreshLive({ silent = false } = {}) {
+      if (!silent) liveBusy.value = true;
+      try {
+        const [status, result] = await Promise.all([api('/live/status'), api('/live/posts')]);
+        const wasActive = liveInfo.value?.active;
+        liveInfo.value = status;
+        livePosts.value = result.posts || [];
+        if (wasActive && !status.active) await refresh({ silent: true });
+      } catch (e) { if (page.value === 'live') error.value = e.message; }
+      finally { if (!silent) liveBusy.value = false; }
+    }
+
+    async function startLive() {
+      liveBusy.value = true;
+      try {
+        error.value = '';
+        const result = await api('/live/start', {method: 'POST', body: JSON.stringify({
+          ...liveConfig.value, permission_confirmed: livePermission.value,
+        })});
+        liveInfo.value = result;
+        notice.value = 'Live observation requested. It stops automatically at the configured limit.';
+        await refreshLive({ silent: true });
+      } catch (e) { error.value = e.message; }
+      finally { liveBusy.value = false; }
+    }
+
+    async function stopLive() {
+      liveBusy.value = true;
+      try {
+        error.value = '';
+        liveInfo.value = await api('/live/stop', {method: 'POST'});
+        notice.value = 'Stop requested; the collector will finish and close the connection.';
+      } catch (e) { error.value = e.message; }
+      finally { liveBusy.value = false; }
+    }
+
+    async function clearLivePosts() {
+      const confirmation = window.prompt('Delete every locally captured Bluesky post? Type DELETE LIVE POSTS to confirm. Synthetic data, reviewer notes and manual references remain.');
+      if (confirmation === null) return;
+      liveBusy.value = true;
+      try {
+        error.value = '';
+        const result = await api('/live/purge', {
+          method: 'POST', body: JSON.stringify({ confirmation }),
+        });
+        notice.value = `Removed ${result.deleted} stored live posts. Earlier cases may lose linked detector evidence.`;
+        await Promise.all([refreshLive({silent:true}), refresh({silent:true})]);
+      } catch (e) { error.value = e.message; }
+      finally { liveBusy.value = false; }
+    }
+
+    function openLive() { navigate('live'); refreshLive(); }
 
     async function loadDemo() {
       busy.value = true;
@@ -296,7 +358,14 @@ createApp({
     function caseBack() { selectedCase.value = null; }
     function statusLabel(status) { return STATUS_LABELS[status] || 'Unreviewed'; }
     function statusClass(status) { return 'status-' + (status || 'unreviewed'); }
-    onMounted(refresh);
+    onMounted(() => {
+      refresh();
+      refreshLive({silent:true});
+      livePolling = setInterval(() => {
+        if (page.value === 'live' || liveInfo.value?.active) refreshLive({silent:true});
+      }, 2500);
+    });
+    onUnmounted(() => { if (livePolling) clearInterval(livePolling); });
 
     return {
       page, stats, clusters, cases, selectedCase, selectedCluster, selectedClusterId, caseCluster,
@@ -308,6 +377,8 @@ createApp({
       refresh, loadDemo, navigate, inspectCluster, openCase, selectCase, saveReview, caseBack,
       statusLabel, statusClass, prettyDate, openLab, refreshLab, saveEvidence, onImportFile,
       importReferences, exportLab, removeEvidence,
+      liveInfo, livePosts, liveSession, liveElapsed, liveConfig, livePermission, liveBusy,
+      refreshLive, startLive, stopLive, clearLivePosts, openLive,
     };
   },
   template: `
@@ -321,23 +392,24 @@ createApp({
           <button :class="['nav-item',{active:page==='network'}]" @click="navigate('network')"><span class="nav-icon">◎</span> Network explorer</button>
           <button :class="['nav-item',{active:page==='investigations'}]" @click="navigate('investigations');caseBack()"><span class="nav-icon">▤</span> Investigations <em>{{stats.investigations}}</em></button>
           <button :class="['nav-item',{active:page==='laboratory'}]" @click="openLab()"><span class="nav-icon">⚗</span> Evidence Laboratory</button>
+          <button :class="['nav-item',{active:page==='live'}]" @click="openLive()"><span class="nav-icon">◉</span> Live Data Research <em v-if="liveInfo.active" class="live-active-dot">LIVE</em></button>
         </nav>
         <div class="sidebar-label sidebar-section">REFERENCE</div>
         <nav class="side-nav"><button :class="['nav-item',{active:page==='methodology'}]" @click="navigate('methodology')"><span class="nav-icon">ⓘ</span> Methodology</button></nav>
-        <div class="sidebar-footer"><span class="pulse"></span> Local research mode <small>Synthetic records &amp; manual references · v0.3</small></div>
+        <div class="sidebar-footer"><span class="pulse"></span> Local research mode <small>Local demo + opt-in public stream · v0.4</small></div>
       </aside>
 
       <div class="workspace">
-        <header class="topbar"><div class="crumb">WORKSPACE <span>/</span> <strong>{{ page === 'overview' ? 'Overview' : page === 'detections' ? 'Detection queue' : page === 'network' ? 'Network explorer' : page === 'investigations' ? 'Investigations' : page === 'laboratory' ? 'Evidence Laboratory' : 'Methodology' }}</strong></div><div class="top-actions"><span class="privacy-label">● LOCAL · NOT PUBLIC</span><button class="icon-button" title="Refresh data" :disabled="loading" @click="refresh()">↻</button></div></header>
+        <header class="topbar"><div class="crumb">WORKSPACE <span>/</span> <strong>{{ page === 'overview' ? 'Overview' : page === 'detections' ? 'Detection queue' : page === 'network' ? 'Network explorer' : page === 'investigations' ? 'Investigations' : page === 'laboratory' ? 'Evidence Laboratory' : page === 'live' ? 'Live Data Research' : 'Methodology' }}</strong></div><div class="top-actions"><span class="privacy-label">● LOCAL · NOT PUBLIC</span><button class="icon-button" title="Refresh data" :disabled="loading" @click="refresh()">↻</button></div></header>
         <main class="main-content">
           <div v-if="error" role="alert" class="alert error"><strong>Something needs attention</strong><span>{{error}}</span><button @click="error=''">×</button></div>
           <div v-if="notice" role="status" class="alert notice"><span>{{notice}}</span><button @click="notice=''">×</button></div>
 
           <template v-if="page==='overview'">
             <div class="page-heading"><div><div class="eyebrow">THE RESEARCH DESK</div><h1>Observatory overview<span class="heading-dot">.</span></h1><p>Understand the patterns. Investigate the evidence. Avoid assumptions.</p></div><div class="heading-actions"><button class="btn outline" @click="refresh()">↻ Refresh</button><button class="btn primary" :disabled="busy" @click="loadDemo()">{{busy?'Loading…':'＋ Load demo data'}}</button></div></div>
-            <div class="hero"><div><span class="hero-label"><i></i> EVIDENCE FIRST / RESEARCH PROTOTYPE</span><h2>Signals are not verdicts.</h2><p>OIO highlights coordination candidates and supports documented human review. Synthetic examples only; no real people or organisations are being assessed.</p><button class="btn hero-btn" @click="navigate('detections')">Explore candidate signals <span>↗</span></button></div><div class="hero-orbit" aria-hidden="true"><div class="orbit-ring one"></div><div class="orbit-ring two"></div><div class="orbit-center">◎</div><span class="orbit-node node-a"></span><span class="orbit-node node-b"></span><span class="orbit-node node-c"></span></div></div>
+            <div class="hero"><div><span class="hero-label"><i></i> EVIDENCE FIRST / RESEARCH PROTOTYPE</span><h2>Signals are not verdicts.</h2><p>OIO highlights coordination candidates and supports documented human review. Synthetic examples and optional short Bluesky public-data captures. Observed patterns do not establish that accounts are automated or controlled together.</p><button class="btn hero-btn" @click="navigate('detections')">Explore candidate signals <span>↗</span></button></div><div class="hero-orbit" aria-hidden="true"><div class="orbit-ring one"></div><div class="orbit-ring two"></div><div class="orbit-center">◎</div><span class="orbit-node node-a"></span><span class="orbit-node node-b"></span><span class="orbit-node node-c"></span></div></div>
             <div class="stats-grid">
-              <article class="stat-card"><div class="stat-top"><span>INGESTED POSTS</span><b>↗</b></div><strong>{{stats.posts}}</strong><div class="stat-bottom">Synthetic records in local store</div></article>
+              <article class="stat-card"><div class="stat-top"><span>INGESTED POSTS</span><b>↗</b></div><strong>{{stats.posts}}</strong><div class="stat-bottom">Local observations · {{stats.live_posts || 0}} live</div></article>
               <article class="stat-card"><div class="stat-top"><span>CANDIDATE CLUSTERS</span><b>⌁</b></div><strong>{{stats.candidate_clusters}}</strong><div class="stat-bottom">Patterns requiring human review</div></article>
               <article class="stat-card"><div class="stat-top"><span>OPEN INVESTIGATIONS</span><b>▤</b></div><strong>{{stats.open_investigations}}</strong><div class="stat-bottom">Research notes &amp; context</div></article>
               <article class="stat-card"><div class="stat-top"><span>PUBLISHED REPORTS</span><b>◇</b></div><strong>{{stats.published_cases}}</strong><div class="stat-bottom">Publishing intentionally disabled</div></article>
@@ -400,13 +472,50 @@ createApp({
                   <p v-if="!filteredEvidence.length" class="small-note">No matching references yet. Add a source URL above or import a permitted CSV/JSON evidence list.</p>
                   <div v-for="item in filteredEvidence" :key="item.id" class="lab-evidence-item"><div class="lab-evidence-head"><div><span :class="['lab-kind','lab-kind-'+item.kind]">{{item.kind}}</span><strong>#{{item.id}} · {{item.title}}</strong></div><button class="btn danger-quiet" :disabled="labSaving" @click="removeEvidence(item)">Remove</button></div><p v-if="item.notes" class="lab-item-notes">{{item.notes}}</p><a :href="item.source_url" target="_blank" rel="noopener noreferrer">{{item.source_url}} ↗</a><div class="lab-meta"><span>Observed: {{prettyDate(item.observed_at)}}</span><span>Added: {{prettyDate(item.captured_at)}}</span><span title="SHA-256 fingerprint of the canonical evidence metadata">SHA-256: <code>{{item.sha256}}</code></span></div></div>
                 </section>
-                <div class="lab-grid lab-footer-grid"><section class="panel"><div class="eyebrow">05 / DETECTOR PROVENANCE</div><h3>Linked source posts</h3><div class="table-wrap"><table><thead><tr><th>ACTOR</th><th>SOURCE</th><th>TIME</th><th>RECORD</th></tr></thead><tbody><tr v-for="post in lab.source_posts" :key="post.id"><td>{{post.actor}}</td><td>{{post.source}}</td><td>{{prettyDate(post.created_at)}}</td><td><a :href="post.url" target="_blank" rel="noopener noreferrer">Source ↗</a></td></tr></tbody></table></div><p class="small-note">Synthetic example.org sources remain placeholders. No automated attribution.</p></section><section class="panel"><div class="eyebrow">06 / RESEARCH BUNDLE</div><h3>Reproducible local export</h3><p class="small-note">JSON includes investigation status and notes, review audit history, source-record snapshots, SHA-256 metadata fingerprints and the detector parameters. CSV contains the post and evidence register, with spreadsheet formula escaping.</p><button class="btn primary" @click="exportLab('json')">↓ Download JSON snapshot</button><button class="btn outline" @click="exportLab('csv')">↓ Download evidence CSV</button><p class="small-note">An integrity hash can detect changes to exported metadata, but cannot prove that a remote page was authentic.</p></section></div>
+                <div class="lab-grid lab-footer-grid"><section class="panel"><div class="eyebrow">05 / DETECTOR PROVENANCE</div><h3>Linked source posts</h3><div class="table-wrap"><table><thead><tr><th>ACTOR</th><th>SOURCE</th><th>TIME</th><th>RECORD</th></tr></thead><tbody><tr v-for="post in lab.source_posts" :key="post.id"><td>{{post.actor}}</td><td>{{post.source}}</td><td>{{prettyDate(post.created_at)}}</td><td><a :href="post.url" target="_blank" rel="noopener noreferrer">Source ↗</a></td></tr></tbody></table></div><p class="small-note">Demo example.org URLs are placeholders; Bluesky observations are public event-stream records, not verified attribution.</p></section><section class="panel"><div class="eyebrow">06 / RESEARCH BUNDLE</div><h3>Reproducible local export</h3><p class="small-note">JSON includes investigation status and notes, review audit history, source-record snapshots, SHA-256 metadata fingerprints and the detector parameters. CSV contains the post and evidence register, with spreadsheet formula escaping.</p><button class="btn primary" @click="exportLab('json')">↓ Download JSON snapshot</button><button class="btn outline" @click="exportLab('csv')">↓ Download evidence CSV</button><p class="small-note">An integrity hash can detect changes to exported metadata, but cannot prove that a remote page was authentic.</p></section></div>
               </template>
             </template>
           </template>
 
-          <template v-else-if="page==='methodology'"><div class="page-heading"><div><div class="eyebrow">TRANSPARENT METHODS</div><h1>How OIO works<span class="heading-dot">.</span></h1><p>Understand the engine's limitations before interpreting a candidate.</p></div></div><div class="method-grid"><article class="panel"><div class="method-number">01</div><h3>Normalize text</h3><p>Lowercase text, strip URLs, collapse whitespace, then compute a SHA-256 fingerprint. Similar meaning with different wording is not detected.</p></article><article class="panel"><div class="method-number">02</div><h3>Group within time</h3><p>Matching text is grouped into non-overlapping 180-second windows anchored to the earliest post, avoiding simple chain-bridging.</p></article><article class="panel"><div class="method-number">03</div><h3>Flag candidate signals</h3><p>A group must contain at least three distinct source/actor pairs. The detector does not determine whether an actor is human or automated.</p></article><article class="panel"><div class="method-number">04</div><h3>Document alternatives</h3><p>Analysts review source records, legitimate explanations and counterevidence. Their notes and status changes are stored locally.</p></article></div><div class="notice-strip large">⚠ This prototype is not an attribution engine, a bot classifier, or a live surveillance tool. It does not identify illegal data centres or private operators. Keep it on localhost until authentication, retention, source permissions and governance are independently addressed.</div></template>
-          <footer>OIO v0.3 · Local research mode · Evidence over assumptions · Never a bot verdict</footer>
+          <template v-else-if="page==='live'">
+            <div class="page-heading"><div><div class="eyebrow">04 / AUTHORIZED PUBLIC STREAM</div><h1>Live Data Research<span class="heading-dot">.</span></h1><p>Run a short, keyword-scoped Bluesky public-post observation. Nothing is collected unless you start it.</p></div><div class="heading-actions"><button class="btn outline" :disabled="liveBusy" @click="refreshLive()">↻ Refresh status</button></div></div>
+            <div class="notice-strip live-warning">⚠ Jetstream delivers public events but not cryptographic repository proofs. This tool is a bounded sample, not a representative survey or proof of bot activity. Posts can be edited or deleted after observation. No automatic publication, identity tracing or political classifications.</div>
+            <div class="live-stats">
+              <div class="lab-stat"><span>COLLECTOR STATE</span><strong class="live-state" :class="{'live-on':liveInfo.active}">{{liveSession?.status || 'Idle'}}</strong><small>{{liveInfo.active ? 'A local observation is in progress' : 'No active network observation'}}</small></div>
+              <div class="lab-stat"><span>EVENTS OBSERVED</span><strong>{{liveSession?.scanned ?? 0}}</strong><small>Includes non-post event messages; maximum {{liveInfo.max_scanned_events || 50000}}</small></div>
+              <div class="lab-stat"><span>KEYWORD MATCHES</span><strong>{{liveSession?.matched ?? 0}}</strong><small>Matches are not proof of coordination</small></div>
+              <div class="lab-stat"><span>SAVED LIVE POSTS</span><strong>{{liveInfo.stored_posts || 0}}</strong><small>All local sessions · cap {{liveInfo.storage_limit || 5000}}</small></div>
+            </div>
+            <div class="live-layout">
+              <section class="panel live-control-panel"><div class="eyebrow">01 / COLLECTION CONTROLS</div><h3>Controlled observation</h3><p class="small-note">Only official Bluesky-hosted Jetstream endpoints are supported. New records are observed from the live tail; no account lookup, private API or historical replay. No background collection on startup.</p>
+                <form @submit.prevent="startLive()">
+                  <label>Exact keyword or phrase (required)<input v-model.trim="liveConfig.keyword" minlength="4" maxlength="64" placeholder="e.g. public announcement" required :disabled="liveInfo.active||liveBusy"></label>
+                  <div class="lab-form-row"><label>Official Jetstream region<select v-model="liveConfig.region" :disabled="liveInfo.active||liveBusy"><option value="us-east">US East</option><option value="us-west">US West</option></select></label>
+                    <label>Observation duration<select v-model.number="liveConfig.duration_seconds" :disabled="liveInfo.active||liveBusy"><option :value="30">30 seconds</option><option :value="60">60 seconds</option><option :value="90">90 seconds</option><option :value="180">3 minutes</option></select></label></div>
+                  <label>Maximum posts saved this session<select v-model.number="liveConfig.max_posts" :disabled="liveInfo.active||liveBusy"><option :value="25">25 posts</option><option :value="50">50 posts</option><option :value="100">100 posts</option><option :value="200">200 posts</option></select></label>
+                  <label class="lab-checkbox"><input type="checkbox" v-model="livePermission" :disabled="liveInfo.active||liveBusy"><span>I confirm this is permitted public-data research and understand posts are stored locally for at most 7 days. I will review source permissions and minimize retained personal data.</span></label>
+                  <div class="live-buttons"><button type="submit" class="btn primary" :disabled="liveInfo.active||liveBusy||!livePermission">◉ Start observation</button><button type="button" class="btn outline" :disabled="!liveInfo.active||liveBusy" @click="stopLive()">■ Stop</button></div>
+                </form>
+                <p class="small-note">Each session also stops after 50,000 scanned events or at your post cap. Repeated sessions are not a statistically representative sample.</p>
+              </section>
+              <section class="panel live-session-panel"><div class="eyebrow">02 / SESSION REPORT</div><h3>Source provenance and limits</h3>
+                <template v-if="liveSession"><div class="live-kv"><span>Session</span><code>{{liveSession.id}}</code></div><div class="live-kv"><span>Phrase filter</span><strong>{{liveSession.keyword}}</strong></div><div class="live-kv"><span>Region</span><strong>{{liveSession.region}}</strong></div><div class="live-kv"><span>Started (local)</span><strong>{{prettyDate(liveSession.started_at)}}</strong></div><div class="live-kv"><span>Ended (local)</span><strong>{{prettyDate(liveSession.ended_at)}}</strong></div><div class="live-kv"><span>New posts this session</span><strong>{{liveSession.inserted}}</strong></div><div class="live-kv"><span>Deleted / updated during capture</span><strong>{{liveSession.removed || 0}}</strong></div><div class="live-kv"><span>Stop reason</span><strong>{{liveSession.stop_reason || 'In progress'}}</strong></div>
+                  <p v-if="liveSession.error" class="live-session-error" role="alert">{{liveSession.error}}</p>
+                </template><div v-else class="empty-state"><span>◉</span><strong>No sessions yet</strong><p>Choose a keyword and start a bounded capture to examine real-world public activity.</p></div>
+                <div class="lab-divider"></div><div class="eyebrow">DATA RETENTION</div><p class="small-note">OIO deletes captured post bodies and provenance automatically after {{liveInfo.retention_days || 7}} days on backend startup and before each new session. Manually recorded investigation notes and links have separate retention and must be reviewed independently.</p>
+                <button class="btn danger-quiet" :disabled="liveInfo.active||liveBusy||!liveInfo.stored_posts" @click="clearLivePosts()">Delete all captured live posts</button>
+              </section>
+            </div>
+            <section class="panel live-records-panel"><div class="panel-heading"><div><div class="eyebrow">03 / OBSERVATION REGISTER</div><h3>Most recent local captures <span class="sub-count">{{livePosts.length}}</span></h3></div><button class="text-link" @click="navigate('detections')">Check detection queue →</button></div>
+              <p class="small-note">Showing up to 60 stored public posts. A source link is a reference, not independently verified proof that the remote record still exists. Identifiers are public DIDs, not verified identities.</p>
+              <div v-if="!livePosts.length" class="live-record-empty">No live posts stored yet. Try a common literal phrase for a short session; a zero-match result is valid and does not imply an outage.</div>
+              <article v-for="post in livePosts" :key="post.id" class="live-post"><div class="live-post-top"><span class="lab-kind">PUBLIC JETSTREAM</span><code :title="post.actor">{{post.actor.length>38 ? post.actor.slice(0,35)+'…' : post.actor}}</code><span>{{prettyDate(post.created_at)}}</span></div><p>{{post.text}}</p><div class="live-post-meta"><span>Observed by {{post.provider}} · CID (unverified): {{post.cid || 'not supplied'}}</span><a :href="post.url" target="_blank" rel="noopener noreferrer">View public record ↗</a></div></article>
+            </section>
+            <div class="notice-strip live-footnote">Detector clusters still require three different actors posting exactly normalized matching text inside 180 seconds. A matching cluster can be investigated in the existing queue and Evidence Laboratory. Most short live observations will produce zero candidate clusters; that is normal.</div>
+          </template>
+
+          <template v-else-if="page==='methodology'"><div class="page-heading"><div><div class="eyebrow">TRANSPARENT METHODS</div><h1>How OIO works<span class="heading-dot">.</span></h1><p>Understand the engine's limitations before interpreting a candidate.</p></div></div><div class="method-grid"><article class="panel"><div class="method-number">01</div><h3>Normalize text</h3><p>Lowercase text, strip URLs, collapse whitespace, then compute a SHA-256 fingerprint. Similar meaning with different wording is not detected.</p></article><article class="panel"><div class="method-number">02</div><h3>Group within time</h3><p>Matching text is grouped into non-overlapping 180-second windows anchored to the earliest post, avoiding simple chain-bridging.</p></article><article class="panel"><div class="method-number">03</div><h3>Flag candidate signals</h3><p>A group must contain at least three distinct source/actor pairs. The detector does not determine whether an actor is human or automated.</p></article><article class="panel"><div class="method-number">04</div><h3>Document alternatives</h3><p>Analysts review source records, legitimate explanations and counterevidence. Their notes and status changes are stored locally.</p></article></div><div class="notice-strip large">⚠ This prototype is not an attribution engine or a bot classifier. Optional live collection is explicitly started, keyword-scoped, capped and time-limited. It does not identify illegal data centres or private operators. Keep it on localhost until authentication, retention, source permissions and governance are independently addressed.</div></template>
+          <footer>OIO v0.4 · Local research mode · Evidence over assumptions · Never a bot verdict</footer>
         </main>
       </div>
     </div>

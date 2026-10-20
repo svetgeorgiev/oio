@@ -38,3 +38,26 @@
 .lab-footer-grid .btn{margin:6px 10px 6px 0}.lab-registry h3{margin-top:6px}
 @media(max-width:1280px){.lab-grid{grid-template-columns:1fr}.lab-footer-grid{grid-template-columns:1fr}}
 @media(max-width:800px){.lab-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.lab-case-selector{flex-direction:column;align-items:stretch}.lab-case-selector select{max-width:none}.lab-form-row{grid-template-columns:1fr}.lab-actions{width:100%}.lab-actions .btn{flex:1}.lab-chart{gap:6px}}
+
+/* OIO v0.4 — opt-in Live Data Research */
+.live-active-dot{background:#1a604e!important;color:#9bf6db!important;letter-spacing:.4px}
+.live-warning{margin-bottom:20px;line-height:1.7}
+.live-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:13px;margin:0 0 20px}
+.live-stats .live-state{font-size:23px;text-transform:capitalize;overflow-wrap:anywhere}
+.live-stats .live-on{color:#7eeac3}
+.live-layout{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(310px,1fr);gap:17px;margin-bottom:19px}
+.live-control-panel form>label,.live-control-panel .lab-form-row label{display:block;color:#bdd4df;font-size:12px;font-weight:730;margin:16px 0 7px}
+.live-control-panel input:not([type=checkbox]),.live-control-panel select{display:block;width:100%;margin-top:9px}
+.live-control-panel .lab-checkbox{display:flex;gap:10px;align-items:start;font-weight:500;line-height:1.6}
+.live-buttons{display:flex;gap:10px;flex-wrap:wrap;margin:16px 0 8px}
+.live-kv{display:flex;justify-content:space-between;gap:16px;padding:12px 0;border-bottom:1px solid #283c4d;font-size:12px}
+.live-kv span{color:#8ca8ba}.live-kv strong,.live-kv code{color:#d8e7ef;max-width:63%;text-align:right;overflow-wrap:anywhere}
+.live-session-error{color:#f2b8bd;word-break:break-word;border:1px solid #76464b;padding:12px;border-radius:7px;font-size:12px}
+.live-control-panel .small-note,.live-session-panel .small-note{font-size:11px;color:#8ea4b6;line-height:1.7}
+.live-records-panel{margin:18px 0}.live-record-empty{font-size:12px;color:#9db3c4;padding:32px;text-align:center}
+.live-post{border-top:1px solid #293d50;padding:17px 0;overflow-wrap:anywhere}.live-post-top{display:flex;align-items:center;flex-wrap:wrap;gap:10px;font-size:11px;color:#8eabbb}
+.live-post-top code{color:#bdcfdf}.live-post p{white-space:pre-wrap;font-size:13px;color:#e0ecf3;line-height:1.5;margin:12px 0;max-height:120px;overflow:auto}
+.live-post-meta{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:11px;color:#829aaf}.live-post-meta span{overflow-wrap:anywhere}
+.live-footnote{margin:17px 0 25px}
+@media(max-width:1200px){.live-layout{grid-template-columns:1fr}.live-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:700px){.live-stats{grid-template-columns:1fr 1fr}.live-buttons .btn{flex:1}.live-kv{align-items:start}.live-kv span{max-width:40%}}

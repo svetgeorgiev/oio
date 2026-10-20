@@ -225,8 +225,27 @@ def lab_snapshot(database, identifier, find_cluster):
         posts = []
         if post_ids:
             placeholders = ','.join('?' for _ in post_ids)
-            posts = [dict(p) for p in c.execute('SELECT id,source,actor,text,created_at,url FROM posts WHERE id IN (' + placeholders + ') ORDER BY created_at,id', post_ids)]
+            posts = [dict(p) for p in c.execute('''SELECT p.id,p.source,p.actor,p.text,p.created_at,p.url,
+              v.did AS live_did, v.rkey AS live_rkey, v.cid AS live_cid,
+              v.event_time_us AS live_time_us, v.record_created_at AS live_record_created_at,
+              v.provider AS live_provider, v.captured_at AS live_captured_at,
+              v.session_id AS live_session_id
+              FROM posts p LEFT JOIN live_post_provenance v ON v.post_id=p.id
+              WHERE p.id IN (''' + placeholders + ') ORDER BY p.created_at,p.id', post_ids)]
     for p in posts:
+        if p['source'] == 'bluesky-jetstream' and p.get('live_did'):
+            p['provenance'] = {
+                'network': 'Bluesky public Jetstream v1-compatible JSON stream',
+                'did': p['live_did'], 'rkey': p['live_rkey'], 'cid_unverified': p['live_cid'],
+                'witnessed_time_us': p['live_time_us'],
+                'claimed_record_created_at': p['live_record_created_at'],
+                'jetstream_provider': p['live_provider'],
+                'captured_at': p['live_captured_at'], 'session_id': p['live_session_id'],
+                'limitations': 'Jetstream alone does not prove record authenticity or current availability.'
+            }
+        for key in tuple(p):
+            if key.startswith('live_'):
+                del p[key]
         p['sha256'] = sha256(p)
     timeline = ([{'id': p['id'], 'kind': 'detected_post', 'label': p['actor'], 'at': p['created_at']}
                  for p in posts] +
@@ -246,12 +265,13 @@ def lab_snapshot(database, identifier, find_cluster):
             'limitations': ['Analyst URLs are manually provided; OIO did not fetch or verify page contents.',
                             'User-supplied observation times are not independently verified.',
                             'Matching content does not establish fake accounts, shared control, intent, or wrongdoing.',
-                            'Source-record domains, manually cited domains and domains shared in post text are different measurements.']}
+                            'Source-record domains, manually cited domains and domains shared in post text are different measurements.',
+                            'Live Jetstream events are not cryptographically verified and may become stale after observation.']}
 
 
 def lab_export(database, identifier, find_cluster):
     snapshot = lab_snapshot(database, identifier, find_cluster)
-    return {'format': 'oio-evidence-snapshot', 'schema_version': 1, 'application_version': '0.3.0',
+    return {'format': 'oio-evidence-snapshot', 'schema_version': 1, 'application_version': '0.4.0',
             'generated_at': utcnow(), 'scope': 'local analyst research',
             'analysis_parameters': {'method': 'normalized exact-text fingerprint', 'window_seconds': 180,
                                     'minimum_distinct_source_actor_pairs': 3,

@@ -124,7 +124,7 @@ class InvestigationTests(InvestigationFixture, unittest.TestCase):
                 c.execute("INSERT INTO reviews VALUES ('legacy','unreviewed','existing note','2026-10-20T08:00:00Z')")
                 c.commit()
             with database() as c:
-                self.assertEqual(c.execute('PRAGMA user_version').fetchone()[0], 3)
+                self.assertEqual(c.execute('PRAGMA user_version').fetchone()[0], 4)
                 self.assertEqual(c.execute('SELECT notes FROM reviews WHERE cluster_id=?', ('legacy',)).fetchone()[0], 'existing note')
                 self.assertEqual(c.execute('SELECT count(*) FROM investigations').fetchone()[0], 0)
 

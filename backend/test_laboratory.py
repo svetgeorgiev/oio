@@ -114,7 +114,7 @@ class LabTests(unittest.TestCase):
         self.assertEqual(len(result['source_posts']), 3)
         self.assertTrue(all(len(p['sha256']) == 64 for p in result['source_posts']))
         self.assertEqual(result['investigation']['id'], self.identifier)
-        self.assertEqual(len(result['limitations']), 4)
+        self.assertEqual(len(result['limitations']), 5)
 
     def test_wrong_investigation_rejected(self):
         with self.assertRaises(LookupError):
@@ -133,7 +133,7 @@ class LabTests(unittest.TestCase):
     def test_migration_preserves_v02_investigations(self):
         self.add()
         with database() as c:
-            self.assertEqual(c.execute('PRAGMA user_version').fetchone()[0], 3)
+            self.assertEqual(c.execute('PRAGMA user_version').fetchone()[0], 4)
             self.assertEqual(c.execute('SELECT COUNT(*) FROM investigations').fetchone()[0], 1)
             self.assertEqual(c.execute('SELECT COUNT(*) FROM posts').fetchone()[0], 5)
 

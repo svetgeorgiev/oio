@@ -1,13 +1,13 @@
-"""OIO v0.3: local, evidence-first coordination research API.
+"""OIO v0.4: local, evidence-first research API with opt-in bounded Bluesky capture.
 
-Only synthetic fixture ingestion is supported. No external data collection, authentication,
-or public publication is implemented. Never bind this prototype to a public interface.
+No authentication or public publication. Never bind this prototype to a public interface.
 """
 import hashlib
 import json
 import os
 import re
 import sqlite3
+import threading
 from collections import defaultdict
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -15,11 +15,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 from laboratory import add_evidence, delete_evidence, import_evidence, lab_snapshot, lab_export
+from live_stream import CaptureManager, init_schema, recent_posts, SOURCE
 
 ROOT = os.path.dirname(os.path.dirname(__file__))
 DB = os.environ.get('OIO_DB', os.path.join(ROOT, 'data.sqlite3'))
 FIXTURE = os.path.join(ROOT, 'fixtures', 'sample_posts.json')
-VERSION = '0.3.0'
+VERSION = '0.4.0'
 MAX_BODY = 16 * 1024
 ALLOWED_STATUSES = ('investigating', 'needs_context', 'dismissed', 'closed')
 
@@ -76,8 +77,8 @@ def connect():
         UNIQUE(investigation_id,sha256)
       );
       CREATE INDEX IF NOT EXISTS ix_evidence_case ON evidence_items(investigation_id);
-      PRAGMA user_version=3;
     ''')
+    init_schema(c)
     return c
 
 
@@ -254,6 +255,9 @@ def update_investigation(identifier, payload):
     return investigation_by_id(identifier)
 
 
+live_manager = CaptureManager(database)
+
+
 class Handler(BaseHTTPRequestHandler):
     def local_host_allowed(self):
         """Reject DNS-rebinding Host headers while keeping ephemeral local test ports usable."""
@@ -275,7 +279,12 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(403, {'error': 'Local host only'})
         path = urlparse(self.path).path
         if path == '/api/health':
-            return self.reply(200, {'status': 'ok', 'version': VERSION, 'mode': 'local synthetic prototype'})
+            return self.reply(200, {'status': 'ok', 'version': VERSION, 'mode': 'localhost research; optional user-triggered Jetstream capture'})
+        if path == '/api/live/status':
+            return self.reply(200, live_manager.status())
+        if path == '/api/live/posts':
+            return self.reply(200, {'posts': recent_posts(database),
+                                    'notice': 'Sampled public posts, not verified identities or bot verdicts.'})
         if path == '/api/clusters':
             return self.reply(200, {'clusters': clusters(), 'notice': 'Signals are not proof of automation, shared control or wrongdoing.'})
         if path.startswith('/api/clusters/'):
@@ -300,10 +309,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/stats':
             with database() as c:
                 n = c.execute('SELECT COUNT(*) FROM posts').fetchone()[0]
+                live = c.execute('SELECT COUNT(*) FROM live_post_provenance').fetchone()[0]
                 cases = c.execute('SELECT COUNT(*) FROM investigations').fetchone()[0]
                 active = c.execute("SELECT COUNT(*) FROM investigations WHERE status IN ('investigating','needs_context')").fetchone()[0]
             return self.reply(200, {'posts': n, 'candidate_clusters': len(clusters()), 'investigations': cases,
-                                    'open_investigations': active, 'published_cases': 0})
+                                    'open_investigations': active, 'published_cases': 0,
+                                    'live_posts': live, 'non_live_posts': n - live})
         return self.reply(404, {'error': 'Not found'})
 
     def read_json(self, limit=MAX_BODY):
@@ -337,6 +348,12 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError('Invalid evidence identifier')
                 delete_evidence(database, parts[2], int(parts[5]), self.read_json())
                 return self.reply(200, {'deleted': True})
+            if path == '/api/live/start':
+                return self.reply(202, live_manager.start(self.read_json()))
+            if path == '/api/live/stop':
+                return self.reply(200, live_manager.stop())
+            if path == '/api/live/purge':
+                return self.reply(200, live_manager.purge(self.read_json()))
             if path == '/api/load-fixture':
                 with open(FIXTURE, encoding='utf-8') as f:
                     return self.reply(200, {'inserted': ingest(json.load(f))})
@@ -347,6 +364,8 @@ class Handler(BaseHTTPRequestHandler):
                 identifier = path.split('/')[-2]
                 return self.reply(200, {'investigation': update_investigation(identifier, self.read_json())})
             return self.reply(404, {'error': 'Not found'})
+        except RuntimeError as exc:
+            return self.reply(409, {'error': str(exc)})
         except (ValueError, OSError) as exc:
             return self.reply(400, {'error': str(exc)})
         except LookupError as exc:
@@ -357,11 +376,16 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == '__main__':
     connect().close()
+    live_manager.reconcile()
+    retention_stop = threading.Event()
+    housekeeping = threading.Thread(target=live_manager.maintenance, args=(retention_stop,), daemon=True)
+    housekeeping.start()
     server = ThreadingHTTPServer(('127.0.0.1', 8765), Handler)
-    print('OIO local API v0.3: http://127.0.0.1:8765', flush=True)
+    print('OIO local API v0.4: http://127.0.0.1:8765', flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print('\nOIO server stopped cleanly.')
     finally:
+        retention_stop.set()
         server.server_close()

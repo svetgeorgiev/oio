@@ -1,0 +1,7 @@
+[
+ {"id":"demo-1","source":"synthetic","actor":"demo-a","text":"A made-up announcement is circulating today!","created_at":"2026-10-20T08:00:00Z","url":"https://example.org/demo/1"},
+ {"id":"demo-2","source":"synthetic","actor":"demo-b","text":"A made-up announcement is circulating today!","created_at":"2026-10-20T08:00:18Z","url":"https://example.org/demo/2"},
+ {"id":"demo-3","source":"synthetic","actor":"demo-c","text":"A made-up announcement is circulating today!","created_at":"2026-10-20T08:00:41Z","url":"https://example.org/demo/3"},
+ {"id":"demo-4","source":"synthetic","actor":"demo-d","text":"An unrelated ordinary conversation.","created_at":"2026-10-20T08:01:00Z","url":"https://example.org/demo/4"},
+ {"id":"demo-5","source":"synthetic","actor":"demo-e","text":"A made-up announcement is circulating today!","created_at":"2026-10-20T11:30:00Z","url":"https://example.org/demo/5"}
+]
